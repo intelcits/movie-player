@@ -76,6 +76,7 @@ async function loadConfig() {
   $("sPort").value = cfg.port || 8765;
   $("sSkip").value = cfg.skip_seconds || 10;
   $("sTmdbKey").value = cfg.tmdb_api_key || "";
+  $("sTmdbSession").value = cfg.tmdb_session_id || "";
   $("sTheme").value = cfg.theme || "default";
   applyTheme(cfg.theme || "default");
   $("sKiosk").checked = !!cfg.kiosk_mode;
@@ -328,6 +329,30 @@ function parseTmdbId(input) {
   const m = input.match(/(\d+)/);
   return m ? parseInt(m[1]) : null;
 }
+
+$("artGoogleBtn").onclick = () => {
+  const q = ($("artGoogleQuery").value || "").trim() || (currentMovie ? (currentMovie.title || currentMovie.name || "") : "");
+  if (!q) return;
+  window.open("https://www.google.com/search?tbm=isch&q=" + encodeURIComponent(q + " movie poster"), "_blank");
+};
+
+$("artUrlBtn").onclick = async () => {
+  const url = ($("artUrlInput").value || "").trim();
+  if (!url) return;
+  if (window._artTarget === "collection") {
+    await api("/api/collection/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentCollection, poster_url: url, backdrop_url: url }) });
+    window._artTarget = null;
+    $("artModal").classList.add("hidden");
+    await loadMovies();
+    openCollection($("collTitle").textContent, currentCollectionItems);
+  } else {
+    await api("/api/movie/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, poster_url: url, backdrop_url: url }) });
+    currentMovie.poster_url = url;
+    currentMovie.backdrop_url = url;
+    $("artModal").classList.add("hidden");
+    openDetail(currentMovie);
+  }
+};
 
 $("artFetchBtn").onclick = async () => {
   const id = parseTmdbId($("artTmdbInput").value);
@@ -597,6 +622,7 @@ $("serverCombo").addEventListener("change", async (e) => {
 $("sSave").onclick = async () => {
   const cfg = {
     tmdb_api_key: $("sTmdbKey").value.trim(),
+    tmdb_session_id: $("sTmdbSession").value.trim(),
     host: $("sHost").value.trim(),
     port: parseInt($("sPort").value),
     skip_seconds: parseInt($("sSkip").value),
