@@ -40,9 +40,13 @@ Then open http://127.0.0.1:8765
 - Controls hide automatically when playback stops or finishes.
 - Movie detail view uses the backdrop art as a visible background.
 - Choose from 4 UI themes (Default, Kodi, Plex, Media Center) in Settings.
-- "Change art" button: search TMDB for alternative posters/backdrops and pick one, or use a frame from the movie.
+- "Change art" button: search TMDB for alternative posters/backdrops and pick one, or use a frame from the movie, or paste a TMDB URL/ID.
 - Sort movies by title, year, or recently added.
+- Streaming: Favorites/Wishlist (add/remove), click to search. TMDB Watchlist shown if session ID configured.
+- Streaming: removed DuckDuckGo option; embedded player opens in new tab.
 - Grid view or split view (list + detail side by side), with left/right panel choice.
+- Tabs: Movies, Series, Streaming (Musicals merged into Movies).
+- Server controls (Stop/Restart/Close) in a combo box in the top bar.
 - Interactive run.bat/run.sh menu to start/stop/restart the service.
 - Browser launch in kiosk (fullscreen) or maximized app mode with minimize/close controls.
 - Streaming tab: search movies/TV shows (TMDB), watch via an embedded player (opens in a new tab), and search across streaming sites on DuckDuckGo.

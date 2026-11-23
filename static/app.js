@@ -11,7 +11,6 @@ const $ = (id) => document.getElementById(id);
 
 function catFromTab(tab) {
   if (tab === "series") return "series";
-  if (tab === "musicals") return "musical";
   return "movie";
 }
 
@@ -57,6 +56,7 @@ function switchTab(tab) {
   if (tab === "streaming") {
     currentCategory = "streaming";
     showView("streaming");
+    loadWishlist();
   } else {
     currentCategory = catFromTab(tab);
     showView("library");
@@ -85,10 +85,10 @@ async function loadConfig() {
 }
 
 async function refreshLibLists() {
-  for (const cat of ["movie", "series", "musical"]) {
-    const key = cat === "movie" ? "movie" : (cat === "series" ? "series" : "musical");
+  for (const cat of ["movie", "series"]) {
+    const key = cat;
     const data = await api(`/api/libraries?category=${key}`);
-    const listId = cat === "movie" ? "movieLibList" : (cat === "series" ? "seriesLibList" : "musicalLibList");
+    const listId = cat === "movie" ? "movieLibList" : "seriesLibList";
     const list = $(listId);
     if (!list) continue;
     list.innerHTML = "";
@@ -566,7 +566,7 @@ $("rescanBtn").onclick = async () => {
   btn.textContent = "Rescanning...";
   btn.disabled = true;
   try {
-    for (const cat of ["movie", "series", "musical"]) {
+    for (const cat of ["movie", "series"]) {
       await api(`/api/scan?category=${cat}&force=1`);
     }
     await loadFilterOptions();
@@ -767,6 +767,53 @@ loadConfig().then(() => {
 });
 
 // streaming
+async function renderStreamCards(container, items, onPlay, onFav) {
+  container.innerHTML = "";
+  items.forEach((it) => {
+    const card = document.createElement("div");
+    card.className = "stream-card";
+    const title = it.title || it.name;
+    const year = it.year || (it.release_date || it.first_air_date || "").slice(0,4);
+    const poster = it.poster || (it.poster_path ? `https://image.tmdb.org/t/p/w342${it.poster_path}` : "");
+    card.innerHTML = `
+      ${poster ? `<img src="${poster}" alt="" />` : ""}
+      <div class="t">${escapeHtml(title)}</div>
+      <div class="y">${year || ""}</div>`;
+    card.style.cursor = "pointer";
+    if (onPlay) {
+      card.querySelector("img")?.addEventListener("click", (ev) => { ev.stopPropagation(); onPlay(it, title, year); });
+      card.querySelector(".t")?.addEventListener("click", (ev) => { ev.stopPropagation(); onPlay(it, title, year); });
+    }
+    if (onFav) {
+      const btn = document.createElement("button");
+      btn.className = "btn small fav-btn";
+      btn.textContent = "✕ Remove";
+      btn.addEventListener("click", async (ev) => { ev.stopPropagation(); await onFav(it); loadWishlist(); });
+      card.appendChild(btn);
+    }
+    container.appendChild(card);
+  });
+}
+
+async function loadWishlist() {
+  try {
+    const favData = await api("/api/streaming/favorites");
+    const wlData = await api("/api/streaming/watchlist");
+    const favItems = (favData.favorites || []).map((f) => ({ id: f.tmdb_id, title: f.title, year: f.year, poster: f.poster, _type: f.media_type || "movie", _fav: true }));
+    const wlItems = (wlData.watchlist || []).map((w) => ({ id: w.id, title: w.title, year: w.year, poster: w.poster, _type: w.media_type || "movie", _wl: true }));
+    renderStreamCards($("wishlistResults"), favItems, (it, title, year) => {
+      $("streamQuery").value = title;
+      doStreamSearch();
+    }, async (it) => {
+      await api("/api/streaming/unfavorite", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ tmdb_id: it.id, media_type: it._type }) });
+    });
+    renderStreamCards($("tmdbWatchlist"), wlItems, (it, title, year) => {
+      $("streamQuery").value = title;
+      doStreamSearch();
+    });
+  } catch (e) {}
+}
+
 async function doStreamSearch() {
   const q = ($("streamQuery").value || "").trim();
   if (!q) return;
@@ -797,26 +844,24 @@ async function doStreamSearch() {
     card.innerHTML = `
       ${poster ? `<img src="${poster}" alt="" />` : ""}
       <div class="t">${escapeHtml(title)}</div>
-      <div class="y">${year} ${it._type === "tv" ? "· TV" : ""}</div>`;
+      <div class="y">${year} ${it._type === "tv" ? "· TV" : ""}</div>
+      <button class="btn small fav-btn">♥ Favorite</button>`;
     card.style.cursor = "pointer";
-    card.onclick = () => openStreamPlayer(it, title, year);
+    card.querySelector("img")?.addEventListener("click", (ev) => { ev.stopPropagation(); openStreamPlayer(it, title, year); });
+    card.querySelector(".t")?.addEventListener("click", (ev) => { ev.stopPropagation(); openStreamPlayer(it, title, year); });
+    card.querySelector(".fav-btn").addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      await api("/api/streaming/favorite", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ tmdb_id: it.id, title, year, poster: it.poster_path ? `https://image.tmdb.org/t/p/w342${it.poster_path}` : null, media_type: it._type }) });
+      loadWishlist();
+    });
     results.appendChild(card);
   });
   sitesDiv.innerHTML = "";
-  if (data.duckduckgo) {
-    const a = document.createElement("a");
-    a.className = "ddg-link";
-    a.href = data.duckduckgo;
-    a.target = "_blank";
-    a.textContent = "Search across all streaming sites on DuckDuckGo →";
-    sitesDiv.appendChild(a);
-  }
   const wiki = document.createElement("a");
   wiki.className = "ddg-link";
   wiki.href = "https://github.com/fmhy/FMHY/wiki/Streaming";
   wiki.target = "_blank";
   wiki.textContent = "Browse all streaming sites (FMHY wiki) →";
-  wiki.style.marginLeft = "16px";
   sitesDiv.appendChild(wiki);
 }
 
