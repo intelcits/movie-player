@@ -15,7 +15,7 @@ goto end
 set "ALREADY=0"
 if exist "%PIDFILE%" (
   set /p OLD=<"%PIDFILE%"
-  tasklist /FI "PID eq %OLD%" 2>nul | find "%OLD%" >nul
+  powershell -NoProfile -Command "if (Get-Process -Id %OLD% -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }" >nul 2>&1
   if %errorlevel%==0 set "ALREADY=1"
 )
 if "%ALREADY%"=="1" goto already_running
@@ -45,7 +45,7 @@ goto menu
 set "ALREADY=0"
 if exist "%PIDFILE%" (
   set /p OLD=<"%PIDFILE%"
-  tasklist /FI "PID eq %OLD%" 2>nul | find "%OLD%" >nul
+  powershell -NoProfile -Command "if (Get-Process -Id %OLD% -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }" >nul 2>&1
   if %errorlevel%==0 set "ALREADY=1"
 )
 if "%ALREADY%"=="1" goto already_running_start
@@ -65,7 +65,7 @@ goto end
 :stop
 if not exist "%PIDFILE%" (
   echo No PID file. Trying to find process...
-  for /f "tokens=2" %%a in ('tasklist /FI "IMAGENAME eq python.exe" /FO LIST ^| find "PID:"') do taskkill /PID %%a /F >nul 2>&1
+  powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='python3.exe'\" | Where-Object { $_.CommandLine -like '*movie_player.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
   echo Stopped.
   goto end
 )
