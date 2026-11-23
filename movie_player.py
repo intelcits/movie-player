@@ -1945,7 +1945,7 @@ def open_browser(url):
             else:
                 args += ["--app=" + url]
                 if fullscreen:
-                    args += ["--start-maximized"]
+                    args += ["--start-fullscreen"]
             subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         except Exception:
