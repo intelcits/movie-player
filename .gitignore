@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime data
+.cache/
+movieplayer.db
+movie_player.conf.json
+
+# OS
+.DS_Store
+Thumbs.db

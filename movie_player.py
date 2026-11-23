@@ -1,0 +1,1797 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+MoviePlayer - local movie library player.
+Backend: pure-Python (stdlib) HTTP server. Uses ffplay/ffprobe/ffmpeg.
+Cross-platform: Windows 10 and Ubuntu 20.04.
+Run: python movie_player.py   (opens http://127.0.0.1:8765)
+"""
+import http.server
+import json
+import os
+import re
+import shutil
+import socketserver
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+import urllib.request
+import uuid
+from pathlib import Path
+
+try:
+    import requests
+    HAS_REQUESTS = True
+except Exception:
+    HAS_REQUESTS = False
+
+HERE = Path(__file__).resolve().parent
+CONFIG_FILE = HERE / "movie_player.conf.json"
+CACHE_DIR = HERE / ".cache"
+THUMB_DIR = CACHE_DIR / "thumbs"
+VTT_DIR = CACHE_DIR / "vtt"
+TMDB_CACHE_FILE = CACHE_DIR / "tmdb.json"
+
+VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".mpg", ".mpeg", ".wmv",
+              ".flv", ".m2ts", ".mts", ".webm", ".ogv", ".ts", ".vob"}
+SUB_EXTS = {".srt", ".ass", ".ssa", ".vtt", ".sub"}
+BROWSER_PLAYABLE = {".mp4", ".webm", ".ogv", ".m4v"}
+
+DEFAULT_CONFIG = {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "media_dirs": [],
+    "movie_dirs": [],
+    "series_dirs": [],
+    "musical_dirs": [],
+    "tmdb_api_key": "",
+    "ffplay_path": "ffplay",
+    "ffprobe_path": "ffprobe",
+    "ffmpeg_path": "ffmpeg",
+    "volume": 80,
+    "skip_seconds": 10,
+    "theme": "default",
+}
+
+
+def load_config():
+    cfg = dict(DEFAULT_CONFIG)
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            cfg.update(data)
+        except Exception:
+            pass
+    # migrate old media_dirs -> movie_dirs
+    if cfg.get("media_dirs") and not cfg.get("movie_dirs"):
+        cfg["movie_dirs"] = list(cfg.get("media_dirs") or [])
+    for k in ("movie_dirs", "series_dirs", "musical_dirs"):
+        cfg.setdefault(k, [])
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    THUMB_DIR.mkdir(parents=True, exist_ok=True)
+    VTT_DIR.mkdir(parents=True, exist_ok=True)
+    return cfg
+
+
+def save_config(cfg):
+    CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+CFG = load_config()
+DB_PATH = CACHE_DIR / "movieplayer.db"
+IMAGES_DIR = CACHE_DIR / "images"
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def db_conn():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = db_conn()
+    try:
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS movies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT UNIQUE NOT NULL,
+            title TEXT,
+            year TEXT,
+            tmdb_id INTEGER,
+            overview TEXT,
+            genres TEXT,
+            runtime INTEGER,
+            director TEXT,
+            cast TEXT,
+            country TEXT,
+            rating REAL,
+            poster_url TEXT,
+            backdrop_url TEXT,
+            poster_local TEXT,
+            backdrop_local TEXT,
+            duration REAL,
+            width INTEGER,
+            height INTEGER,
+            codec TEXT,
+            audio TEXT,
+            file_info TEXT,
+            category TEXT,
+            collection TEXT,
+            file_mtime REAL,
+            scanned_at REAL,
+            sub_count INTEGER DEFAULT 0
+        )
+        """)
+        # migrate existing DBs
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(movies)").fetchall()]
+        if "file_info" not in cols:
+            conn.execute("ALTER TABLE movies ADD COLUMN file_info TEXT")
+        if "category" not in cols:
+            conn.execute("ALTER TABLE movies ADD COLUMN category TEXT")
+        if "collection" not in cols:
+            conn.execute("ALTER TABLE movies ADD COLUMN collection TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_title ON movies(title)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_year ON movies(year)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_country ON movies(country)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_director ON movies(director)")
+        # streaming sites cache
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS streaming_sites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            url TEXT UNIQUE,
+            description TEXT,
+            fetched_at REAL
+        )
+        """)
+        # collection-level art
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS collections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            poster_url TEXT,
+            backdrop_url TEXT,
+            poster_local TEXT,
+            backdrop_local TEXT,
+            scanned_at REAL
+        )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+init_db()
+
+# ---------- TMDB cache ----------
+_tmdb_cache = {}
+if TMDB_CACHE_FILE.exists():
+    try:
+        _tmdb_cache = json.loads(TMDB_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        _tmdb_cache = {}
+
+
+def save_tmdb_cache():
+    try:
+        TMDB_CACHE_FILE.write_text(json.dumps(_tmdb_cache, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def tool_path(name):
+    # name like 'ffplay' -> config key ffplay_path
+    key = name + "_path"
+    p = CFG.get(key, name)
+    return p if p else name
+
+
+# ---------- helpers ----------
+def norm_path(p):
+    if p is None:
+        return None
+    p = str(p).strip().strip('"').strip("'")
+    if not p:
+        return None
+    try:
+        return str(Path(p).expanduser().resolve())
+    except Exception:
+        return p
+
+
+def parse_title_year(filename):
+    stem = Path(filename).stem
+    m = re.search(r'\((\d{4})\)', stem)
+    if m:
+        year = m.group(1)
+        title = stem[:m.start()].strip(" .-_")
+        return title or stem, year
+    m = re.search(r'\b(19|20)\d{2}\b', stem)
+    if m:
+        year = m.group(0)
+        title = stem[:m.start()].strip(" .-_")
+        if title:
+            return title, year
+    # strip common release tags
+    title = re.sub(r'[\._]', ' ', stem)
+    title = re.sub(r'\b(1080p|720p|2160p|4k|bluray|brrip|webrip|webdl|hdrip|x264|x265|h264|h265|hevc|aac|ac3)\b', '', title, flags=re.I)
+    title = re.sub(r'\s+', ' ', title).strip()
+    return title or stem, None
+
+
+def find_subtitles(video_path):
+    vp = Path(video_path)
+    folder = vp.parent
+    vstem = vp.stem
+    subs = []
+    # same folder
+    for f in folder.iterdir():
+        if f.is_file() and f.suffix.lower() in SUB_EXTS:
+            sstem = f.stem
+            if sstem == vstem or sstem.startswith(vstem + ".") or sstem.startswith(vstem + " "):
+                subs.append(str(f))
+    # subs/subtitles subfolder
+    for sub in ("subs", "subtitles", "sub"):
+        d = folder / sub
+        if d.is_dir():
+            for f in d.iterdir():
+                if f.is_file() and f.suffix.lower() in SUB_EXTS:
+                    sstem = f.stem
+                    if sstem == vstem or sstem.startswith(vstem):
+                        subs.append(str(f))
+    # de-dup
+    seen = set()
+    out = []
+    for s in subs:
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    out.sort()
+    return out
+
+
+def sub_label(path):
+    name = Path(path).name
+    # guess language from suffix like .es.srt
+    stem = Path(path).stem
+    parts = stem.split(".")
+    if len(parts) > 1:
+        lang = parts[-1]
+        if len(lang) <= 6 and lang.isalpha():
+            return f"{name} ({lang})"
+    return name
+
+
+def scan_dir(root):
+    root = norm_path(root)
+    results = []
+    if not root or not os.path.isdir(root):
+        return results
+    # first pass: collect video files
+    video_files = []
+    for dp, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for f in files:
+            ext = os.path.splitext(f)[1].lower()
+            if ext in VIDEO_EXTS:
+                full = os.path.join(dp, f)
+                video_files.append((dp, f, full, ext))
+    # compute recursive folder video counts
+    folder_counts = {}
+    for dp, f, full, ext in video_files:
+        rel = os.path.relpath(dp, root)
+        if rel == ".":
+            continue
+        parts = rel.split(os.sep)
+        cum = ""
+        for part in parts:
+            cum = os.path.join(cum, part) if cum else part
+            folder_counts[cum] = folder_counts.get(cum, 0) + 1
+    # Actually folder_counts above counts files directly in each folder only (since os.walk visits each dp).
+    # Recompute as recursive counts:
+    folder_counts = {}
+    for dp, f, full, ext in video_files:
+        rel = os.path.relpath(dp, root)
+        if rel == ".":
+            continue
+        parts = rel.split(os.sep)
+        cum = ""
+        for part in parts:
+            cum = os.path.join(cum, part) if cum else part
+            folder_counts[cum] = folder_counts.get(cum, 0) + 1
+    # The above counts each file once per ancestor, so it's recursive-ish (each file contributes to all ancestors). Good.
+    for dp, f, full, ext in video_files:
+        rel = os.path.relpath(dp, root)
+        title, year = parse_title_year(f)
+        subs = find_subtitles(full)
+        try:
+            mtime = os.path.getmtime(full)
+        except OSError:
+            mtime = None
+        # determine collection: highest ancestor folder (closest to root) with >1 video
+        collection = None
+        if rel != ".":
+            parts = rel.split(os.sep)
+            cum = ""
+            for part in parts:
+                cum = os.path.join(cum, part) if cum else part
+                if folder_counts.get(cum, 0) > 1:
+                    collection = cum  # keep first (highest) by not overwriting once set? 
+                    break
+            # Wait: we want the FIRST ancestor with >1. The loop goes top-down, so first found is highest. break after first.
+        # But if first ancestor has count 1, skip and check next. The break only after >1. Good.
+        # However, if the first ancestor has 1 but a deeper has >1, we skip first and set collection to deeper. But we break at first >1, which would be the deeper. That's not desired (we want highest >1). 
+        # Redo: find highest ancestor with >1.
+        collection = None
+        if rel != ".":
+            parts = rel.split(os.sep)
+            cum = ""
+            for part in parts:
+                cum = os.path.join(cum, part) if cum else part
+                if folder_counts.get(cum, 0) > 1:
+                    if collection is None:
+                        collection = cum
+                    # don't break; keep first
+            # collection now is the first (highest) ancestor with >1
+        results.append({
+            "path": full,
+            "name": f,
+            "title": title,
+            "year": year,
+            "size": os.path.getsize(full),
+            "ext": ext,
+            "browser_playable": ext in BROWSER_PLAYABLE,
+            "subtitles": [{"path": s, "label": sub_label(s)} for s in subs],
+            "sub_count": len(subs),
+            "mtime": mtime,
+            "collection": collection,
+        })
+    results.sort(key=lambda x: (x["title"] or x["name"]).lower())
+    return results
+
+
+def get_db_movie(path):
+    conn = db_conn()
+    try:
+        row = conn.execute("SELECT * FROM movies WHERE path=?", (path,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def upsert_movie_db(data):
+    conn = db_conn()
+    try:
+        conn.execute("""
+        INSERT INTO movies (path,title,year,tmdb_id,overview,genres,runtime,director,"cast",country,
+            rating,poster_url,backdrop_url,poster_local,backdrop_local,duration,width,height,codec,audio,
+            file_info,category,collection,file_mtime,scanned_at,sub_count)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(path) DO UPDATE SET
+            title=excluded.title, year=excluded.year, tmdb_id=excluded.tmdb_id, overview=excluded.overview,
+            genres=excluded.genres, runtime=excluded.runtime, director=excluded.director, "cast"=excluded."cast",
+            country=excluded.country, rating=excluded.rating, poster_url=excluded.poster_url,
+            backdrop_url=excluded.backdrop_url, poster_local=excluded.poster_local, backdrop_local=excluded.backdrop_local,
+            duration=excluded.duration, width=excluded.width, height=excluded.height, codec=excluded.codec,
+            audio=excluded.audio, file_info=excluded.file_info, category=excluded.category, collection=excluded.collection,
+            file_mtime=excluded.file_mtime, scanned_at=excluded.scanned_at, sub_count=excluded.sub_count
+        """, (
+            data.get("path"), data.get("title"), data.get("year"), data.get("tmdb_id"),
+            data.get("overview"), json.dumps(data.get("genres") or []), data.get("runtime"),
+            data.get("director"), json.dumps(data.get("cast") or []), data.get("country"),
+            data.get("rating"), data.get("poster_url"), data.get("backdrop_url"),
+            data.get("poster_local"), data.get("backdrop_local"), data.get("duration"),
+            data.get("width"), data.get("height"), data.get("codec"), data.get("audio"),
+            data.get("file_info"), data.get("category"), data.get("collection"), data.get("mtime"), time.time(), data.get("sub_count", 0),
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def clean_missing_movies():
+    conn = db_conn()
+    try:
+        rows = conn.execute("SELECT path FROM movies").fetchall()
+        for r in rows:
+            if not os.path.isfile(r["path"]):
+                conn.execute("DELETE FROM movies WHERE path=?", (r["path"],))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_collection(name):
+    if not name:
+        return None
+    conn = db_conn()
+    try:
+        row = conn.execute("SELECT * FROM collections WHERE name=?", (name,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def upsert_collection(name, poster_url=None, backdrop_url=None, poster_local=None, backdrop_local=None):
+    if not name:
+        return
+    conn = db_conn()
+    try:
+        existing = conn.execute("SELECT * FROM collections WHERE name=?", (name,)).fetchone()
+        if existing:
+            conn.execute("""UPDATE collections SET
+                poster_url=COALESCE(?,poster_url), backdrop_url=COALESCE(?,backdrop_url),
+                poster_local=COALESCE(?,poster_local), backdrop_local=COALESCE(?,backdrop_local),
+                scanned_at=? WHERE name=?""",
+                (poster_url, backdrop_url, poster_local, backdrop_local, time.time(), name))
+        else:
+            conn.execute("""INSERT INTO collections (name,poster_url,backdrop_url,poster_local,backdrop_local,scanned_at)
+                            VALUES (?,?,?,?,?,?)""",
+                         (name, poster_url, backdrop_url, poster_local, backdrop_local, time.time()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def enrich_entry(entry, category=None, force=False):
+    path = entry["path"]
+    info = ffprobe_info(path)
+    entry["duration"] = info.get("duration")
+    entry["width"] = info.get("width")
+    entry["height"] = info.get("height")
+    entry["codec"] = info.get("codec")
+    entry["audio"] = info.get("audio")
+    entry["audio_channels"] = info.get("audio_channels")
+    entry["category"] = category or entry.get("category")
+    entry["file_info"] = compute_file_info(info)
+    mtime = entry.get("mtime")
+    existing = get_db_movie(path)
+    # decide if TMDB fetch needed
+    need_fetch = True
+    if not force and existing and existing.get("tmdb_id") and mtime is not None and existing.get("file_mtime") == mtime:
+        need_fetch = False
+    # load from db if no fetch
+    if not need_fetch and existing:
+        # reuse already-probed info for file_info (cheap)
+        entry["duration"] = info.get("duration") or existing.get("duration")
+        entry["width"] = info.get("width") or existing.get("width")
+        entry["height"] = info.get("height") or existing.get("height")
+        entry["codec"] = info.get("codec") or existing.get("codec")
+        entry["audio"] = info.get("audio") or existing.get("audio")
+        entry["audio_channels"] = info.get("audio_channels") or existing.get("audio_channels")
+        entry["file_info"] = compute_file_info(info) or existing.get("file_info")
+        entry["tmdb_id"] = existing.get("tmdb_id")
+        entry["overview"] = existing.get("overview")
+        try:
+            entry["genres"] = json.loads(existing.get("genres") or "[]")
+        except Exception:
+            entry["genres"] = []
+        entry["runtime"] = existing.get("runtime")
+        entry["director"] = existing.get("director")
+        try:
+            entry["cast"] = json.loads(existing.get("cast") or "[]")
+        except Exception:
+            entry["cast"] = []
+        entry["country"] = existing.get("country")
+        entry["rating"] = existing.get("rating")
+        entry["poster_url"] = existing.get("poster_url")
+        entry["backdrop_url"] = existing.get("backdrop_url")
+        if force:
+            entry["poster_local"] = cache_image(entry.get("poster_url"), force=True)
+            entry["backdrop_local"] = cache_image(entry.get("backdrop_url"), force=True)
+            if not entry.get("poster_local"):
+                entry["poster_local"] = make_thumb(path)
+            if not entry.get("backdrop_local"):
+                entry["backdrop_local"] = entry.get("poster_local") or make_thumb(path)
+        else:
+            entry["poster_local"] = existing.get("poster_local")
+            entry["backdrop_local"] = existing.get("backdrop_local")
+            if not entry.get("poster_local"):
+                entry["poster_local"] = make_thumb(path)
+            if not entry.get("backdrop_local"):
+                entry["backdrop_local"] = entry.get("poster_local") or make_thumb(path)
+    else:
+        # TMDB fetch
+        title = entry.get("title")
+        year = entry.get("year")
+        search_res = tmdb_search(title, year)
+        tmdb_id = search_res.get("id") if search_res else None
+        details = tmdb_details(tmdb_id) if tmdb_id else None
+        if details:
+            entry["tmdb_id"] = details.get("tmdb_id")
+            entry["title"] = details.get("title") or entry.get("title")
+            if details.get("year"):
+                entry["year"] = details.get("year")
+            entry["overview"] = details.get("overview")
+            entry["genres"] = details.get("genres") or []
+            entry["runtime"] = details.get("runtime")
+            entry["director"] = details.get("director")
+            entry["cast"] = details.get("cast") or []
+            entry["country"] = details.get("country")
+            entry["rating"] = details.get("rating")
+            entry["poster_url"] = details.get("poster_url")
+            entry["backdrop_url"] = details.get("backdrop_url")
+        else:
+            entry["tmdb_id"] = tmdb_id
+            entry["overview"] = search_res.get("overview") if search_res else None
+            entry["poster_url"] = search_res.get("poster") if search_res else None
+            entry["backdrop_url"] = search_res.get("backdrop") if search_res else None
+            entry["genres"] = []
+            entry["cast"] = []
+            entry["country"] = None
+            entry["director"] = None
+            entry["runtime"] = None
+            entry["rating"] = search_res.get("rating") if search_res else None
+        # cache images
+        entry["poster_local"] = cache_image(entry.get("poster_url"), force=force)
+        entry["backdrop_local"] = cache_image(entry.get("backdrop_url"), force=force)
+        # fallback to a frame from the movie if no art
+        if not entry.get("poster_local"):
+            entry["poster_local"] = make_thumb(path)
+        if not entry.get("backdrop_local"):
+            entry["backdrop_local"] = entry.get("poster_local") or make_thumb(path)
+    # upsert DB
+    upsert_movie_db({
+        "path": path,
+        "title": entry.get("title"),
+        "year": entry.get("year"),
+        "tmdb_id": entry.get("tmdb_id"),
+        "overview": entry.get("overview"),
+        "genres": entry.get("genres"),
+        "runtime": entry.get("runtime"),
+        "director": entry.get("director"),
+        "cast": entry.get("cast"),
+        "country": entry.get("country"),
+        "rating": entry.get("rating"),
+        "poster_url": entry.get("poster_url"),
+        "backdrop_url": entry.get("backdrop_url"),
+        "poster_local": entry.get("poster_local"),
+        "backdrop_local": entry.get("backdrop_local"),
+        "duration": entry.get("duration"),
+        "width": entry.get("width"),
+        "height": entry.get("height"),
+        "codec": entry.get("codec"),
+        "audio": entry.get("audio"),
+        "file_info": entry.get("file_info"),
+        "category": entry.get("category"),
+        "collection": entry.get("collection"),
+        "mtime": mtime,
+        "sub_count": entry.get("sub_count", 0),
+    })
+    # normalize lists
+    entry.setdefault("genres", [])
+    entry.setdefault("cast", [])
+    return entry
+
+
+def ffprobe_info(path):
+    cmd = [tool_path("ffprobe"), "-v", "error", "-analyzeduration", "1000000", "-probesize", "500000",
+           "-show_format", "-show_streams", "-of", "json", path]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        data = json.loads(r.stdout or "{}")
+    except Exception as e:
+        return {"error": str(e)}
+    info = {"path": path, "duration": None, "width": None, "height": None, "codec": None, "audio": None, "audio_channels": None}
+    fmt = data.get("format") or {}
+    if fmt.get("duration"):
+        try:
+            info["duration"] = float(fmt["duration"])
+        except ValueError:
+            pass
+    for s in data.get("streams", []):
+        if s.get("codec_type") == "video" and info["width"] is None:
+            info["width"] = s.get("width")
+            info["height"] = s.get("height")
+            info["codec"] = s.get("codec_name")
+        if s.get("codec_type") == "audio" and info["audio"] is None:
+            info["audio"] = s.get("codec_name")
+            info["audio_channels"] = s.get("channels")
+    return info
+
+
+def compute_file_info(info):
+    w = info.get("width") or 0
+    h = info.get("height") or 0
+    if w >= 3840:
+        res = "4K (2160p)"
+    elif w >= 2560:
+        res = "1440p"
+    elif w >= 1920:
+        res = "1080p"
+    elif w >= 1280:
+        res = "720p"
+    elif w > 0:
+        res = f"{w}x{h}"
+    else:
+        res = ""
+    audio = (info.get("audio") or "").upper()
+    ch = info.get("audio_channels")
+    if audio and ch:
+        if ch >= 6:
+            audio = f"{audio} 5.1"
+        elif ch == 2:
+            audio = f"{audio} 2.0"
+        else:
+            audio = f"{audio} {ch}ch"
+    parts = [p for p in (res, audio) if p]
+    return " · ".join(parts)
+
+
+def tmdb_search(title, year):
+    key = (CFG.get("tmdb_api_key") or "").strip()
+    if not key or not HAS_REQUESTS:
+        return None
+    cache_key = f"{title}|{year or ''}"
+    if cache_key in _tmdb_cache:
+        return _tmdb_cache[cache_key]
+    params = {"api_key": key, "query": title, "include_adult": "false", "language": "en-US"}
+    if year:
+        params["year"] = year
+    for _attempt in range(3):
+        try:
+            r = requests.get("https://api.themoviedb.org/3/search/movie", params=params, timeout=12)
+            if r.status_code == 429:
+                time.sleep(2)
+                continue
+            data = r.json()
+            break
+        except Exception as e:
+            return {"error": str(e)}
+    else:
+        return None
+    res = data.get("results") or []
+    if not res:
+        _tmdb_cache[cache_key] = None
+        save_tmdb_cache()
+        return None
+    m = res[0]
+    out = {
+        "id": m.get("id"),
+        "title": m.get("title"),
+        "year": (m.get("release_date") or "")[:4],
+        "overview": m.get("overview"),
+        "rating": m.get("vote_average"),
+        "poster": ("https://image.tmdb.org/t/p/w500" + m["poster_path"]) if m.get("poster_path") else None,
+        "backdrop": ("https://image.tmdb.org/t/p/w1280" + m["backdrop_path"]) if m.get("backdrop_path") else None,
+    }
+    _tmdb_cache[cache_key] = out
+    save_tmdb_cache()
+    return out
+
+
+def cache_image(url, force=False):
+    if not url:
+        return None
+    try:
+        import hashlib
+        h = hashlib.sha1(url.encode()).hexdigest()
+        ext = ".jpg"
+        low = url.lower()
+        if ".png" in low:
+            ext = ".png"
+        elif ".webp" in low:
+            ext = ".webp"
+        out = IMAGES_DIR / (h + ext)
+        if force and out.exists():
+            try:
+                out.unlink()
+            except Exception:
+                pass
+        if out.exists() and out.stat().st_size > 0:
+            return str(out)
+        if not HAS_REQUESTS:
+            return None
+        r = requests.get(url, timeout=20)
+        if r.status_code == 200 and r.content:
+            out.write_bytes(r.content)
+            return str(out)
+    except Exception:
+        pass
+    return None
+
+
+def tmdb_details(tmdb_id):
+    key = (CFG.get("tmdb_api_key") or "").strip()
+    if not key or not HAS_REQUESTS or not tmdb_id:
+        return None
+    cache_key = f"details|{tmdb_id}"
+    if cache_key in _tmdb_cache:
+        return _tmdb_cache[cache_key]
+    data = {}
+    cred = {}
+    for _attempt in range(3):
+        try:
+            r = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}", params={"api_key": key, "language": "en-US"}, timeout=12)
+            if r.status_code == 429:
+                time.sleep(2); continue
+            data = r.json()
+            r2 = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}/credits", params={"api_key": key}, timeout=12)
+            if r2.status_code == 429:
+                time.sleep(2); continue
+            cred = r2.json() if r2.status_code == 200 else {}
+            break
+        except Exception as e:
+            return {"error": str(e)}
+    genres = [g.get("name") for g in (data.get("genres") or []) if g.get("name")]
+    countries = [c.get("name") for c in (data.get("production_countries") or []) if c.get("name")]
+    director = None
+    for c in (cred.get("crew") or []):
+        if c.get("job") == "Director":
+            director = c.get("name")
+            break
+    cast = [c.get("name") for c in (cred.get("cast") or [])[:12] if c.get("name")]
+    poster_path = data.get("poster_path")
+    backdrop_path = data.get("backdrop_path")
+    poster_url = ("https://image.tmdb.org/t/p/w500" + poster_path) if poster_path else None
+    backdrop_url = ("https://image.tmdb.org/t/p/w1280" + backdrop_path) if backdrop_path else None
+    out = {
+        "tmdb_id": data.get("id"),
+        "title": data.get("title"),
+        "year": (data.get("release_date") or "")[:4],
+        "overview": data.get("overview"),
+        "genres": genres,
+        "runtime": data.get("runtime"),
+        "director": director,
+        "cast": cast,
+        "country": ", ".join(countries) if countries else None,
+        "rating": data.get("vote_average"),
+        "poster_url": poster_url,
+        "backdrop_url": backdrop_url,
+    }
+    _tmdb_cache[cache_key] = out
+    save_tmdb_cache()
+    return out
+
+
+def make_thumb(video_path):
+    vp = Path(video_path)
+    key = str(vp) + "|" + str(vp.stat().st_mtime if vp.exists() else 0)
+    import hashlib
+    h = hashlib.sha1(key.encode()).hexdigest()
+    out = THUMB_DIR / (h + ".jpg")
+    if out.exists() and out.stat().st_size > 0:
+        return str(out)
+    # probe duration for seek point
+    info = ffprobe_info(video_path)
+    dur = info.get("duration") or 0
+    ss = min(30.0, dur * 0.1) if dur else 5
+    cmd = [tool_path("ffmpeg"), "-y", "-ss", str(ss), "-i", video_path,
+           "-vframes", "1", "-q:v", "3", str(out)]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=120)
+    except Exception:
+        pass
+    if out.exists() and out.stat().st_size > 0:
+        return str(out)
+    return None
+
+
+def escape_sub_path(p):
+    p = p.replace("\\", "/")
+    # escape drive colon
+    if len(p) > 1 and p[1] == ":":
+        p = p[0] + "\\:" + p[2:]
+    # escape single quotes
+    p = p.replace("'", "\\'")
+    return p
+
+
+def convert_sub_to_vtt(sub_path):
+    sp = Path(sub_path)
+    if sp.suffix.lower() == ".vtt":
+        return str(sp)
+    import hashlib
+    key = str(sp) + "|" + str(sp.stat().st_mtime if sp.exists() else 0)
+    h = hashlib.sha1(key.encode()).hexdigest()
+    out = VTT_DIR / (h + ".vtt")
+    if out.exists() and out.stat().st_size > 0:
+        return str(out)
+    cmd = [tool_path("ffmpeg"), "-y", "-i", str(sp), str(out)]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=120)
+    except Exception:
+        pass
+    if out.exists() and out.stat().st_size > 0:
+        return str(out)
+    # fallback: manual srt->vtt
+    try:
+        text = sp.read_text(encoding="utf-8", errors="replace")
+        # basic conversion
+        lines = text.splitlines()
+        out_lines = ["WEBVTT", ""]
+        for line in lines:
+            if "-->" in line:
+                line = line.replace(",", ".")
+            out_lines.append(line)
+        out.write_text("\n".join(out_lines), encoding="utf-8")
+        return str(out)
+    except Exception:
+        return None
+
+
+# ---------- playback state ----------
+PLAYBACK = {
+    "proc": None,
+    "gen": 0,
+    "path": None,
+    "sub": None,
+    "pos": 0.0,        # base position of current segment
+    "volume": CFG.get("volume", 80),
+    "paused": False,
+    "playing": False,
+    "duration": 0.0,
+    "segment_start": 0.0,
+    "monitor": None,
+}
+
+
+def _kill_proc(proc):
+    if proc is None:
+        return
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def current_position():
+    if not PLAYBACK["playing"]:
+        return PLAYBACK["pos"]
+    if PLAYBACK["paused"]:
+        return PLAYBACK["pos"]
+    import time
+    return PLAYBACK["pos"] + (time.monotonic() - PLAYBACK["segment_start"])
+
+
+def _focus_ffplay():
+    time.sleep(1.5)
+    title = "MoviePlayer"
+    try:
+        if os.name == "nt":
+            import ctypes
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            SW_RESTORE = 9
+            SW_SHOW = 5
+            HWND_TOP = 0
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_SHOWWINDOW = 0x0040
+            ASFW_ANY = -1
+            # allow any process to set foreground
+            try:
+                user32.AllowSetForegroundWindow(ASFW_ANY)
+            except Exception:
+                pass
+            hwnd = None
+            # find by exact title first
+            for _ in range(30):
+                hwnd = user32.FindWindowW(None, title)
+                if hwnd:
+                    break
+                # enumerate windows as fallback
+                if hwnd is None:
+                    found = {"h": None}
+                    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+                    def cb(h, _):
+                        buf = ctypes.create_unicode_buffer(256)
+                        user32.GetWindowTextW(h, buf, 256)
+                        t = buf.value
+                        if t and title.lower() in t.lower():
+                            found["h"] = h
+                            return False
+                        return True
+                    user32.EnumWindows(cb, 0)
+                    hwnd = found["h"]
+                if hwnd:
+                    break
+                time.sleep(0.3)
+            if not hwnd:
+                return
+            # restore & focus
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            user32.ShowWindow(hwnd, SW_SHOW)
+            fg = user32.GetForegroundWindow()
+            if fg and fg != hwnd:
+                fg_tid = user32.GetWindowThreadProcessId(fg, None)
+                cur_tid = kernel32.GetCurrentThreadId()
+                if fg_tid and fg_tid != cur_tid:
+                    user32.AttachThreadInput(fg_tid, cur_tid, True)
+            user32.SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            user32.SetActiveWindow(hwnd)
+            if fg and fg != hwnd:
+                fg_tid = user32.GetWindowThreadProcessId(fg, None)
+                cur_tid = kernel32.GetCurrentThreadId()
+                if fg_tid and fg_tid != cur_tid:
+                    user32.AttachThreadInput(fg_tid, cur_tid, False)
+        else:
+            for cmd in (["xdotool", "search", "--name", title, "windowactivate"],
+                        ["wmctrl", "-a", title]):
+                try:
+                    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                    return
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+
+def _launch_ffplay(path, sub, pos, volume, gen):
+    cmd = [tool_path("ffplay"), "-window_title", "MoviePlayer",
+           "-autoexit", "-ss", f"{pos:.3f}", "-volume", str(int(volume))]
+    if sub:
+        esc = escape_sub_path(sub)
+        cmd += ["-vf", f"subtitles='{esc}'"]
+    cmd += [path]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+    except FileNotFoundError:
+        return None
+    PLAYBACK["proc"] = proc
+    PLAYBACK["gen"] = gen
+    # bring ffplay window to foreground
+    threading.Thread(target=_focus_ffplay, daemon=True).start()
+    # monitor
+    def monitor(p, g):
+        try:
+            p.wait()
+        except Exception:
+            pass
+        # only update if still current generation
+        if PLAYBACK["gen"] == g and PLAYBACK["proc"] is p:
+            # process ended naturally
+            if PLAYBACK["playing"] and not PLAYBACK["paused"]:
+                PLAYBACK["pos"] = PLAYBACK["duration"] if PLAYBACK["duration"] else current_position()
+            PLAYBACK["playing"] = False
+            PLAYBACK["paused"] = False
+            PLAYBACK["proc"] = None
+    t = threading.Thread(target=monitor, args=(proc, gen), daemon=True)
+    t.start()
+    PLAYBACK["monitor"] = t
+    return proc
+
+
+def do_play(path, sub=None, ss=None, volume=None):
+    path = norm_path(path)
+    if not path or not os.path.isfile(path):
+        return {"error": "file not found"}
+    # kill existing
+    _kill_proc(PLAYBACK["proc"])
+    PLAYBACK["proc"] = None
+    if volume is not None:
+        PLAYBACK["volume"] = int(volume)
+    # new file?
+    if path != PLAYBACK["path"]:
+        PLAYBACK["pos"] = 0.0
+        PLAYBACK["duration"] = 0.0
+        PLAYBACK["sub"] = None
+    PLAYBACK["path"] = path
+    if sub is not None:
+        PLAYBACK["sub"] = sub if sub else None
+    if ss is not None:
+        PLAYBACK["pos"] = float(ss)
+    if PLAYBACK["duration"] == 0.0:
+        info = ffprobe_info(path)
+        if info.get("duration"):
+            PLAYBACK["duration"] = info["duration"]
+    pos = PLAYBACK["pos"]
+    if pos < 0:
+        pos = 0.0
+    if PLAYBACK["duration"] and pos > PLAYBACK["duration"]:
+        pos = PLAYBACK["duration"]
+    PLAYBACK["pos"] = pos
+    gen = PLAYBACK["gen"] + 1
+    proc = _launch_ffplay(path, PLAYBACK["sub"], pos, PLAYBACK["volume"], gen)
+    if proc is None:
+        return {"error": "ffplay not found. Check ffplay_path in settings."}
+    import time
+    PLAYBACK["segment_start"] = time.monotonic()
+    PLAYBACK["paused"] = False
+    PLAYBACK["playing"] = True
+    return playback_status()
+
+
+def do_pause():
+    if not PLAYBACK["playing"] or PLAYBACK["paused"]:
+        return playback_status()
+    PLAYBACK["pos"] = current_position()
+    _kill_proc(PLAYBACK["proc"])
+    PLAYBACK["proc"] = None
+    PLAYBACK["paused"] = True
+    PLAYBACK["playing"] = True
+    return playback_status()
+
+
+def do_resume():
+    if not PLAYBACK["paused"]:
+        return playback_status()
+    PLAYBACK["paused"] = False
+    gen = PLAYBACK["gen"] + 1
+    proc = _launch_ffplay(PLAYBACK["path"], PLAYBACK["sub"], PLAYBACK["pos"], PLAYBACK["volume"], gen)
+    if proc is None:
+        PLAYBACK["paused"] = True
+        return {"error": "ffplay not found"}
+    import time
+    PLAYBACK["segment_start"] = time.monotonic()
+    PLAYBACK["playing"] = True
+    return playback_status()
+
+
+def do_stop():
+    _kill_proc(PLAYBACK["proc"])
+    PLAYBACK["proc"] = None
+    PLAYBACK["playing"] = False
+    PLAYBACK["paused"] = False
+    PLAYBACK["pos"] = 0.0
+    return playback_status()
+
+
+def do_seek(pos):
+    if not PLAYBACK.get("path"):
+        return playback_status()
+    try:
+        pos = float(pos)
+    except (TypeError, ValueError):
+        return {"error": "bad position"}
+    if pos < 0:
+        pos = 0.0
+    if PLAYBACK["duration"] and pos > PLAYBACK["duration"]:
+        pos = PLAYBACK["duration"]
+    was_playing = PLAYBACK["playing"] and not PLAYBACK["paused"]
+    PLAYBACK["pos"] = pos
+    _kill_proc(PLAYBACK["proc"])
+    PLAYBACK["proc"] = None
+    if was_playing:
+        gen = PLAYBACK["gen"] + 1
+        proc = _launch_ffplay(PLAYBACK["path"], PLAYBACK["sub"], pos, PLAYBACK["volume"], gen)
+        if proc is None:
+            PLAYBACK["playing"] = False
+            return {"error": "ffplay not found"}
+        import time
+        PLAYBACK["segment_start"] = time.monotonic()
+        PLAYBACK["playing"] = True
+        PLAYBACK["paused"] = False
+    else:
+        PLAYBACK["paused"] = PLAYBACK["playing"]  # keep paused state
+        # if was paused, remain paused at new pos
+        PLAYBACK["playing"] = PLAYBACK["playing"]
+    return playback_status()
+
+
+def do_volume(vol):
+    try:
+        vol = int(vol)
+    except (TypeError, ValueError):
+        return {"error": "bad volume"}
+    vol = max(0, min(100, vol))
+    PLAYBACK["volume"] = vol
+    CFG["volume"] = vol
+    save_config(CFG)
+    if PLAYBACK["playing"] and not PLAYBACK["paused"] and PLAYBACK["path"]:
+        # relaunch at current pos
+        pos = current_position()
+        PLAYBACK["pos"] = pos
+        _kill_proc(PLAYBACK["proc"])
+        PLAYBACK["proc"] = None
+        gen = PLAYBACK["gen"] + 1
+        proc = _launch_ffplay(PLAYBACK["path"], PLAYBACK["sub"], pos, vol, gen)
+        if proc is None:
+            return {"error": "ffplay not found"}
+        import time
+        PLAYBACK["segment_start"] = time.monotonic()
+    return playback_status()
+
+
+def do_skip(delta):
+    pos = current_position() + float(delta)
+    return do_seek(pos)
+
+
+def playback_status():
+    return {
+        "playing": PLAYBACK["playing"],
+        "paused": PLAYBACK["paused"],
+        "path": PLAYBACK["path"],
+        "sub": PLAYBACK["sub"],
+        "position": current_position(),
+        "duration": PLAYBACK["duration"],
+        "volume": PLAYBACK["volume"],
+    }
+
+
+# ---------- folder browsing ----------
+def list_drives():
+    out = []
+    if os.name == "nt":
+        for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            d = f"{c}:\\"
+            if os.path.isdir(d):
+                out.append(d)
+    else:
+        out.append("/")
+        home = str(Path.home())
+        if home not in out:
+            out.append(home)
+    return out
+
+
+def fetch_streaming_sites(force=False):
+    conn = db_conn()
+    try:
+        rows = conn.execute("SELECT fetched_at FROM streaming_sites LIMIT 1").fetchone()
+        if rows and not force and (time.time() - (rows["fetched_at"] or 0)) < 86400:
+            # already cached
+            pass
+        else:
+            # fetch
+            url = "https://raw.githubusercontent.com/wiki/fmhy/FMHY/Streaming.md"
+            try:
+                r = requests.get(url, timeout=20) if HAS_REQUESTS else None
+                text = r.text if (r and r.status_code == 200) else ""
+            except Exception:
+                text = ""
+            if not text:
+                # try github page
+                try:
+                    r = requests.get("https://github.com/fmhy/FMHY/wiki/Streaming", timeout=20)
+                    text = r.text if (r and r.status_code == 200) else ""
+                except Exception:
+                    text = ""
+            # parse markdown links [name](url)
+            import re as _re
+            sites = []
+            seen = set()
+            for m in _re.finditer(r"\[([^\]]+)\]\((https?://[^)]+)\)", text):
+                name = m.group(1).strip()
+                u = m.group(2).strip()
+                if not name or not u:
+                    continue
+                low = u.lower()
+                if "github.com" in low or "fmhy" in low:
+                    continue
+                if ".onion" in low or "rentry.co" in low or "rentry.org" in low:
+                    continue
+                if low.startswith("http://") and "localhost" not in low:
+                    # keep https preferred but allow http
+                    pass
+                if u in seen:
+                    continue
+                seen.add(u)
+                sites.append((name, u))
+            # store
+            conn.execute("DELETE FROM streaming_sites")
+            now = time.time()
+            for name, u in sites:
+                conn.execute("INSERT OR IGNORE INTO streaming_sites (name,url,description,fetched_at) VALUES (?,?,?,?)",
+                             (name, u, None, now))
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def get_streaming_sites():
+    fetch_streaming_sites()
+    conn = db_conn()
+    try:
+        rows = conn.execute("SELECT name,url,description FROM streaming_sites ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def list_dirs(path):
+    if not path:
+        return list_drives()
+    p = norm_path(path)
+    if not p or not os.path.isdir(p):
+        return []
+    out = []
+    try:
+        for entry in sorted(os.scandir(p), key=lambda e: e.name.lower()):
+            if entry.is_dir() and not entry.name.startswith("."):
+                out.append(entry.path)
+    except Exception:
+        pass
+    return out
+
+
+# ---------- HTTP handler ----------
+class Handler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass
+
+    def handle_one_request(self):
+        try:
+            super().handle_one_request()
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, TimeoutError):
+            pass
+
+    def handle_error(self, request, client_address):
+        pass
+
+    def _send(self, code, body=b"", content_type="text/plain; charset=utf-8", headers=None):
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        if headers:
+            for k, v in headers.items():
+                self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _json(self, obj, code=200):
+        self._send(code, json.dumps(obj, ensure_ascii=False), "application/json; charset=utf-8")
+
+    def _serve_file(self, path, download_name=None):
+        path = norm_path(path)
+        if not path or not os.path.isfile(path):
+            self._send(404, "not found")
+            return
+        size = os.path.getsize(path)
+        # content type
+        ext = os.path.splitext(path)[1].lower()
+        mime = {
+            ".html": "text/html; charset=utf-8",
+            ".htm": "text/html; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8",
+            ".json": "application/json; charset=utf-8",
+            ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm",
+            ".ogv": "video/ogg", ".mp3": "audio/mpeg", ".wav": "audio/wav",
+            ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+            ".gif": "image/gif", ".svg": "image/svg+xml",
+            ".vtt": "text/vtt; charset=utf-8",
+            ".srt": "application/x-subrip; charset=utf-8",
+            ".txt": "text/plain; charset=utf-8",
+        }.get(ext, "application/octet-stream")
+        # Range support
+        rng = self.headers.get("Range")
+        start = 0
+        end = size - 1
+        status = 200
+        if rng and rng.startswith("bytes="):
+            try:
+                spec = rng[6:].split(",")[0]
+                if "-" in spec:
+                    a, b = spec.split("-", 1)
+                    if a:
+                        start = int(a)
+                    if b:
+                        end = int(b)
+                if start > end or start >= size:
+                    self._send(416, "range not satisfiable")
+                    return
+                status = 206
+            except Exception:
+                start = 0
+                end = size - 1
+                status = 200
+        length = end - start + 1
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(length),
+        }
+        if status == 206:
+            headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+        if download_name:
+            headers["Content-Disposition"] = f'attachment; filename="{download_name}"'
+        self.send_response(status)
+        self.send_header("Content-Type", mime)
+        for k, v in headers.items():
+            self.send_header(k, v)
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        try:
+            with open(path, "rb") as f:
+                f.seek(start)
+                remaining = length
+                chunk = 65536
+                while remaining > 0:
+                    data = f.read(min(chunk, remaining))
+                    if not data:
+                        break
+                    self.wfile.write(data)
+                    remaining -= len(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        qs = urllib.parse.parse_qs(parsed.query)
+
+        if path == "/" or path == "/index.html":
+            self._serve_file(str(HERE / "static" / "index.html"))
+            return
+        if path.startswith("/static/"):
+            name = path[len("/static/"):]
+            # safe
+            name = name.lstrip("/")
+            fpath = HERE / "static" / name
+            if fpath.is_file():
+                # mime by ext
+                ext = fpath.suffix.lower()
+                mime = {
+                    ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+                    ".js": "application/javascript; charset=utf-8", ".json": "application/json",
+                    ".png": "image/png", ".jpg": "image/jpeg", ".svg": "image/svg+xml",
+                }.get(ext, "application/octet-stream")
+                self._serve_file(str(fpath))
+                return
+            self._send(404, "not found")
+            return
+        if path == "/player.html":
+            self._serve_static("player.html", "text/html; charset=utf-8")
+            return
+
+        if path == "/api/config":
+            self._json(dict(CFG))
+            return
+        if path == "/api/libraries":
+            category = (qs.get("category", ["movie"])[0] or "movie").lower()
+            key = category + "_dirs"
+            self._json({"media_dirs": CFG.get(key, []), "category": category})
+            return
+        if path == "/api/browse":
+            p = qs.get("path", [None])[0]
+            if p is not None:
+                p = urllib.parse.unquote(p)
+            dirs = list_dirs(p)
+            self._json({"path": p, "dirs": dirs})
+            return
+        if path == "/api/scan":
+            category = qs.get("category", [None])[0]
+            force = qs.get("force", ["0"])[0] in ("1", "true", "yes")
+            d = qs.get("dir", [None])[0]
+            if d is not None:
+                d = urllib.parse.unquote(d)
+            if d:
+                dirs_to_scan = [d]
+            else:
+                key = (category or "movie") + "_dirs"
+                dirs_to_scan = CFG.get(key, []) or CFG.get("media_dirs", [])
+            results = []
+            for root in dirs_to_scan:
+                rp = norm_path(root)
+                if rp and os.path.isdir(rp):
+                    results.extend(scan_dir(rp))
+            # de-dup by path
+            seen = set()
+            uniq = []
+            for r in results:
+                if r["path"] in seen:
+                    continue
+                seen.add(r["path"])
+                uniq.append(r)
+            cat = category or "movie"
+            # enrich + store metadata (TMDB etc.) in parallel
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            def _enrich(e):
+                try:
+                    enrich_entry(e, cat, force=force)
+                except Exception as ex:
+                    e.setdefault("genres", [])
+                    e.setdefault("cast", [])
+                return e
+            with ThreadPoolExecutor(max_workers=3) as ex:
+                futures = [ex.submit(_enrich, e) for e in uniq]
+                for f in as_completed(futures):
+                    pass
+            clean_missing_movies()
+            self._json({"movies": uniq, "count": len(uniq)})
+            return
+        if path == "/api/probe":
+            p = qs.get("path", [None])[0]
+            if p is None:
+                self._json({"error": "missing path"}, 400)
+                return
+            p = urllib.parse.unquote(p)
+            self._json(ffprobe_info(p))
+            return
+        if path == "/api/thumb":
+            p = qs.get("path", [None])[0]
+            if p is None:
+                self._send(404, "missing path")
+                return
+            p = urllib.parse.unquote(p)
+            t = make_thumb(p)
+            if t and os.path.isfile(t):
+                self._serve_file(t)
+            else:
+                self._send(404, "no thumb")
+            return
+        if path == "/api/tmdb":
+            title = qs.get("title", [""])[0]
+            year = qs.get("year", [""])[0]
+            title = urllib.parse.unquote(title)
+            self._json({"result": tmdb_search(title, year or None)})
+            return
+        if path == "/api/tmdb/results":
+            title = urllib.parse.unquote(qs.get("title", [""])[0] or "")
+            year = qs.get("year", [""])[0] or None
+            key = (CFG.get("tmdb_api_key") or "").strip()
+            out = []
+            if key and HAS_REQUESTS and title:
+                try:
+                    params = {"api_key": key, "query": title, "include_adult": "false"}
+                    if year:
+                        params["year"] = year
+                    r = requests.get("https://api.themoviedb.org/3/search/movie", params=params, timeout=12)
+                    for m in (r.json().get("results") or [])[:12]:
+                        out.append({
+                            "id": m.get("id"),
+                            "title": m.get("title"),
+                            "year": (m.get("release_date") or "")[:4],
+                            "overview": m.get("overview"),
+                            "rating": m.get("vote_average"),
+                            "poster": ("https://image.tmdb.org/t/p/w342" + m["poster_path"]) if m.get("poster_path") else None,
+                            "backdrop": ("https://image.tmdb.org/t/p/w780" + m["backdrop_path"]) if m.get("backdrop_path") else None,
+                        })
+                except Exception:
+                    pass
+            self._json({"results": out})
+            return
+        if path == "/api/tmdb/details":
+            tid = qs.get("id", [""])[0]
+            d = tmdb_details(int(tid)) if tid else None
+            self._json({"details": d})
+            return
+        if path == "/api/subtitles":
+            p = qs.get("path", [None])[0]
+            if p is None:
+                self._json({"error": "missing path"}, 400)
+                return
+            p = urllib.parse.unquote(p)
+            subs = find_subtitles(p)
+            self._json({"subtitles": [{"path": s, "label": sub_label(s)} for s in subs]})
+            return
+        if path == "/api/vtt":
+            p = qs.get("path", [None])[0]
+            if p is None:
+                self._send(404, "missing path")
+                return
+            p = urllib.parse.unquote(p)
+            v = convert_sub_to_vtt(p)
+            if v and os.path.isfile(v):
+                self._serve_file(v)
+            else:
+                self._send(404, "no vtt")
+            return
+        if path == "/api/file":
+            p = qs.get("path", [None])[0]
+            if p is None:
+                self._send(404, "missing path")
+                return
+            p = urllib.parse.unquote(p)
+            self._serve_file(p)
+            return
+        if path == "/api/status":
+            self._json(playback_status())
+            return
+        if path == "/api/movies":
+            # filters from query
+            q = (qs.get("q", [""])[0] or "").strip().lower()
+            country = (qs.get("country", [""])[0] or "").strip().lower()
+            director = (qs.get("director", [""])[0] or "").strip().lower()
+            actor = (qs.get("actor", [""])[0] or "").strip().lower()
+            genre = (qs.get("genre", [""])[0] or "").strip().lower()
+            year = (qs.get("year", [""])[0] or "").strip()
+            category = (qs.get("category", [""])[0] or "").strip().lower()
+            conn = db_conn()
+            try:
+                rows = conn.execute("SELECT * FROM movies ORDER BY title").fetchall()
+                # load collection art
+                coll_rows = conn.execute("SELECT * FROM collections").fetchall()
+            finally:
+                conn.close()
+            coll_map = {dict(c)["name"]: dict(c) for c in coll_rows}
+            out = []
+            for r in rows:
+                r = dict(r)
+                if not os.path.isfile(r["path"]):
+                    continue
+                if category and (r.get("category") or "movie").lower() != category:
+                    continue
+                coll = r.get("collection")
+                if coll and coll in coll_map:
+                    c = coll_map[coll]
+                    r["collection_poster_url"] = c.get("poster_url")
+                    r["collection_backdrop_url"] = c.get("backdrop_url")
+                    r["collection_poster_local"] = c.get("poster_local")
+                    r["collection_backdrop_local"] = c.get("backdrop_local")
+                # parse lists
+                try:
+                    genres = json.loads(r.get("genres") or "[]")
+                except Exception:
+                    genres = []
+                try:
+                    cast = json.loads(r.get("cast") or "[]")
+                except Exception:
+                    cast = []
+                r["genres"] = genres
+                r["cast"] = cast
+                # filters
+                title_l = (r.get("title") or "").lower()
+                if q and q not in title_l:
+                    continue
+                if country and country not in (r.get("country") or "").lower():
+                    continue
+                if director and director not in (r.get("director") or "").lower():
+                    continue
+                if actor and not any(actor in (c or "").lower() for c in cast):
+                    continue
+                if genre and not any(genre in (g or "").lower() for g in genres):
+                    continue
+                if year and str(r.get("year") or "") != year:
+                    continue
+                out.append(r)
+            self._json({"movies": out, "count": len(out)})
+            return
+        pass
+        if path == "/api/movie":
+            p = qs.get("path", [None])[0]
+            if p is None:
+                self._json({"error": "missing path"}, 400)
+                return
+            p = urllib.parse.unquote(p)
+            m = get_db_movie(p)
+            if m:
+                try:
+                    m["genres"] = json.loads(m.get("genres") or "[]")
+                except Exception:
+                    m["genres"] = []
+                try:
+                    m["cast"] = json.loads(m.get("cast") or "[]")
+                except Exception:
+                    m["cast"] = []
+            self._json({"movie": m})
+            return
+        if path == "/api/streaming/sites":
+            sites = get_streaming_sites()
+            self._json({"sites": sites, "count": len(sites)})
+            return
+        if path == "/api/streaming/search":
+            q = urllib.parse.unquote(qs.get("q", [""])[0] or "")
+            # TMDB search for movie and tv
+            results = {"movies": [], "tv": []}
+            key = (CFG.get("tmdb_api_key") or "").strip()
+            if key and HAS_REQUESTS and q:
+                try:
+                    r = requests.get("https://api.themoviedb.org/3/search/movie", params={"api_key": key, "query": q}, timeout=12)
+                    results["movies"] = r.json().get("results", [])[:10]
+                    r2 = requests.get("https://api.themoviedb.org/3/search/tv", params={"api_key": key, "query": q}, timeout=12)
+                    results["tv"] = r2.json().get("results", [])[:10]
+                except Exception:
+                    pass
+            sites = get_streaming_sites()
+            # build a multi-site search URL via duckduckgo (keep short to avoid query length limits)
+            site_filter = " OR ".join(f"site:{urllib.parse.urlparse(s['url']).netloc}" for s in sites[:6])
+            ddg = "https://duckduckgo.com/?q=" + urllib.parse.quote(f"{q} ({site_filter})")
+            self._json({"query": q, "tmdb": results, "sites": sites, "duckduckgo": ddg})
+            return
+        if path == "/api/filter_options":
+            category = (qs.get("category", [""])[0] or "").strip().lower()
+            conn = db_conn()
+            try:
+                if category:
+                    rows = conn.execute('SELECT country,director,genres,"cast",year FROM movies WHERE category=?', (category,)).fetchall()
+                else:
+                    rows = conn.execute('SELECT country,director,genres,"cast",year FROM movies').fetchall()
+                rows = [dict(r) for r in rows]
+            finally:
+                conn.close()
+            countries = set()
+            directors = set()
+            genres = set()
+            actors = set()
+            years = set()
+            for r in rows:
+                if r.get("country"):
+                    countries.add(r["country"])
+                if r.get("director"):
+                    directors.add(r["director"])
+                if r.get("year"):
+                    years.add(r["year"])
+                try:
+                    for g in json.loads(r.get("genres") or "[]"):
+                        genres.add(g)
+                except Exception:
+                    pass
+                try:
+                    for a in json.loads(r.get("cast") or "[]"):
+                        actors.add(a)
+                except Exception:
+                    pass
+            self._json({
+                "countries": sorted(countries),
+                "directors": sorted(directors),
+                "genres": sorted(genres),
+                "actors": sorted(actors),
+                "years": sorted(years, reverse=True),
+            })
+            return
+
+        self._send(404, "not found")
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        raw = self.rfile.read(length) if length > 0 else b""
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else {}
+        except Exception:
+            data = {}
+
+        if path == "/api/config":
+            # update config (merge)
+            for k, v in data.items():
+                if k == "tmdb_api_key" and "..." in str(v):
+                    continue
+                CFG[k] = v
+            save_config(CFG)
+            self._json({"ok": True})
+            return
+        if path == "/api/libraries":
+            action = data.get("action")
+            category = (data.get("category") or "movie").lower()
+            key = category + "_dirs"
+            CFG.setdefault(key, [])
+            d = norm_path(data.get("dir"))
+            if action == "add" and d:
+                if d not in CFG[key]:
+                    CFG[key].append(d)
+                save_config(CFG)
+            elif action == "remove" and d:
+                CFG[key] = [x for x in CFG.get(key, []) if norm_path(x) != d]
+                save_config(CFG)
+            self._json({"media_dirs": CFG.get(key, []), "category": category})
+            return
+        if path == "/api/movie/art":
+            p = norm_path(data.get("path"))
+            poster_url = data.get("poster_url")
+            backdrop_url = data.get("backdrop_url")
+            if not p:
+                self._json({"error": "missing path"}, 400)
+                return
+            existing = get_db_movie(p) or {}
+            if poster_url is None and backdrop_url is None:
+                tl = make_thumb(p)
+                poster_local = tl
+                backdrop_local = tl
+            else:
+                poster_local = cache_image(poster_url) if poster_url else existing.get("poster_local")
+                backdrop_local = cache_image(backdrop_url) if backdrop_url else existing.get("backdrop_local")
+                if not backdrop_local and poster_local:
+                    backdrop_local = poster_local
+            conn = db_conn()
+            try:
+                conn.execute("""UPDATE movies SET poster_url=?, backdrop_url=?, poster_local=?, backdrop_local=?, scanned_at=? WHERE path=?""",
+                             (poster_url, backdrop_url, poster_local, backdrop_local, time.time(), p))
+                conn.commit()
+            finally:
+                conn.close()
+            m = get_db_movie(p)
+            if m:
+                try:
+                    m["genres"] = json.loads(m.get("genres") or "[]")
+                except Exception:
+                    m["genres"] = []
+                try:
+                    m["cast"] = json.loads(m.get("cast") or "[]")
+                except Exception:
+                    m["cast"] = []
+            self._json({"movie": m})
+            return
+        if path == "/api/collection/art":
+            collection = data.get("collection")
+            poster_url = data.get("poster_url")
+            backdrop_url = data.get("backdrop_url")
+            if not collection:
+                self._json({"error": "missing collection"}, 400)
+                return
+            if poster_url is None and backdrop_url is None:
+                conn = db_conn()
+                try:
+                    row = conn.execute("SELECT path FROM movies WHERE collection=? LIMIT 1", (collection,)).fetchone()
+                finally:
+                    conn.close()
+                tl = make_thumb(row["path"]) if row else None
+                upsert_collection(collection, poster_local=tl, backdrop_local=tl)
+            else:
+                poster_local = cache_image(poster_url) if poster_url else None
+                backdrop_local = cache_image(backdrop_url) if backdrop_url else None
+                if not backdrop_local and poster_local:
+                    backdrop_local = poster_local
+                upsert_collection(collection, poster_url=poster_url, backdrop_url=backdrop_url,
+                                 poster_local=poster_local, backdrop_local=backdrop_local)
+            self._json({"ok": True, "collection": get_collection(collection)})
+            return
+        if path == "/api/play":
+            res = do_play(data.get("path"), data.get("sub"), data.get("ss"), data.get("volume"))
+            self._json(res)
+            return
+        if path == "/api/pause":
+            self._json(do_pause())
+            return
+        if path == "/api/resume":
+            self._json(do_resume())
+            return
+        if path == "/api/stop":
+            self._json(do_stop())
+            return
+        if path == "/api/seek":
+            self._json(do_seek(data.get("pos", 0)))
+            return
+        if path == "/api/skip":
+            self._json(do_skip(data.get("delta", CFG.get("skip_seconds", 10))))
+            return
+        if path == "/api/volume":
+            self._json(do_volume(data.get("volume", CFG.get("volume", 80))))
+            return
+
+        self._json({"error": "not found"}, 404)
+
+    def _serve_static(self, name, ctype):
+        fpath = HERE / name
+        if fpath.is_file():
+            self._serve_file(str(fpath))
+        else:
+            self._send(404, "missing " + name)
+
+
+class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+def open_browser(url):
+    try:
+        import webbrowser
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
+def main():
+    host = CFG.get("host", "127.0.0.1")
+    port = int(CFG.get("port", 8765))
+    httpd = ThreadingServer((host, port), Handler)
+    url = f"http://{host}:{port}/"
+    print(f"MoviePlayer running at {url}")
+    print("Press Ctrl+C to stop.")
+    threading.Thread(target=lambda: (time.sleep(1.0), open_browser(url)), daemon=True).start()
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    finally:
+        do_stop()
+        httpd.server_close()
+
+
+if __name__ == "__main__":
+    main()

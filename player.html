@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Browser Player</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  body { margin:0; background:#000; color:#fff; }
+  .wrap { max-width:1100px; margin:20px auto; padding:0 16px; }
+  video { width:100%; max-height:70vh; background:#000; }
+  .info { margin-top:12px; color:#9aa0a6; font-size:13px; word-break:break-all; }
+  .ctrl { display:flex; gap:8px; margin-top:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <video id="vid" controls autoplay></video>
+  <div class="ctrl">
+    <button onclick="document.getElementById('vid').playbackRate=0.5">0.5x</button>
+    <button onclick="document.getElementById('vid').playbackRate=1">1x</button>
+    <button onclick="document.getElementById('vid').playbackRate=1.5">1.5x</button>
+    <button onclick="document.getElementById('vid').playbackRate=2">2x</button>
+  </div>
+  <div class="info" id="info"></div>
+</div>
+<script>
+  const params = new URLSearchParams(location.search);
+  const path = params.get("path");
+  const sub = params.get("sub");
+  const vid = document.getElementById("vid");
+  vid.src = "/api/file?path=" + encodeURIComponent(path);
+  if (sub) {
+    const track = document.createElement("track");
+    track.kind = "subtitles";
+    track.label = "Subtitles";
+    track.srclang = "en";
+    track.default = true;
+    track.src = "/api/vtt?path=" + encodeURIComponent(sub);
+    vid.appendChild(track);
+  }
+  document.getElementById("info").textContent = path;
+</script>
+</body>
+</html>

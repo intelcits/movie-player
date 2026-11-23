@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoviePlayer</title>
+<link rel="stylesheet" href="/static/style.css">
+<link id="themeCss" rel="stylesheet" href="/static/theme-default.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🎬 MoviePlayer</div>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="movies">Movies</button>
+    <button class="tab-btn" data-tab="series">Series</button>
+    <button class="tab-btn" data-tab="musicals">Musicals</button>
+    <button class="tab-btn" data-tab="streaming">Streaming</button>
+  </nav>
+  <div class="top-controls">
+    <button id="settingsBtn" class="btn icon">⚙</button>
+  </div>
+</header>
+
+<main>
+  <!-- Local media view (movies/series/musicals) -->
+  <section id="libraryView">
+    <div class="toolbar">
+      <input id="searchBox" type="search" placeholder="Search..." />
+      <button id="scanBtn" class="btn">Scan</button>
+      <button id="filtersToggle" class="btn">Filters</button>
+    </div>
+    <div id="filtersPanel" class="filters-panel hidden">
+      <select id="fGenre"><option value="">All genres</option></select>
+      <select id="fCountry"><option value="">All countries</option></select>
+      <select id="fDirector"><option value="">All directors</option></select>
+      <select id="fActor"><option value="">All actors</option></select>
+      <select id="fYear"><option value="">All years</option></select>
+      <button id="fClear" class="btn small">Clear</button>
+    </div>
+    <div id="emptyState" class="empty">
+      <p>No media loaded. Add a folder in ⚙ Settings, then Scan.</p>
+    </div>
+    <div id="grid" class="grid"></div>
+  </section>
+
+  <!-- Collection view -->
+  <section id="collectionView" class="hidden">
+    <button id="collBackBtn" class="btn">← Back</button>
+    <h2 id="collTitle"></h2>
+    <div class="detail-actions">
+      <button id="collChangeArtBtn" class="btn">Change art</button>
+    </div>
+    <div id="collGrid" class="grid"></div>
+  </section>
+
+  <!-- Detail view -->
+  <section id="detailView" class="detail hidden">
+    <button id="backBtn" class="btn">← Back</button>
+    <div class="detail-backdrop" id="dBackdrop"></div>
+    <div class="detail-hero">
+      <div class="detail-poster"><img id="dPoster" alt="" /></div>
+      <div class="detail-info">
+        <h1 id="dTitle"></h1>
+        <div class="meta-line">
+          <span id="dYear"></span>
+          <span id="dRating"></span>
+          <span id="dRuntime"></span>
+          <span id="dRes"></span>
+          <span id="dCountry"></span>
+        </div>
+        <div class="meta-line">
+          <span id="dGenres"></span>
+        </div>
+        <p id="dFileInfo" class="detail-line"></p>
+        <p id="dDirector" class="detail-line"></p>
+        <p id="dCast" class="detail-line"></p>
+        <p id="dOverview" class="overview"></p>
+        <div class="detail-actions">
+          <button id="playBtn" class="btn primary big">▶ Play</button>
+          <button id="browserPlayBtn" class="btn">Browser play</button>
+          <button id="changeArtBtn" class="btn">Change art</button>
+          <select id="subSelect"></select>
+        </div>
+        <div class="detail-path" id="dPath"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Streaming view -->
+  <section id="streamingView" class="hidden">
+    <div class="streaming-search">
+      <input id="streamQuery" type="search" placeholder="Search movie or TV show..." />
+      <button id="streamSearchBtn" class="btn primary">Search</button>
+    </div>
+    <div id="streamProgress" class="stream-progress">
+      <div class="spinner"></div>
+      <span>Searching streaming sites…</span>
+    </div>
+    <div id="streamPlayer" class="stream-player hidden"></div>
+    <div id="streamResults" class="stream-results"></div>
+    <div id="streamSites" class="stream-sites"></div>
+  </section>
+</main>
+
+<!-- Player control bar -->
+<div id="playerBar" class="player-bar hidden">
+  <div class="pb-info">
+    <img id="pbPoster" alt="" />
+    <div class="pb-text">
+      <div id="pbTitle" class="pb-title"></div>
+      <div id="pbStatus" class="pb-status"></div>
+    </div>
+  </div>
+  <div class="pb-controls">
+    <button id="pbRew" class="btn icon" title="Rewind 30s">⏮</button>
+    <button id="pbBack" class="btn icon" title="Back">⏪</button>
+    <button id="pbPlayPause" class="btn primary icon">▶</button>
+    <button id="pbStop" class="btn icon" title="Stop">⏹</button>
+    <button id="pbFwd" class="btn icon" title="Forward">⏩</button>
+    <button id="pbFf" class="btn icon" title="Forward 30s">⏭</button>
+  </div>
+  <div class="pb-seek">
+    <span id="pbCur">0:00</span>
+    <input id="pbSeek" type="range" min="0" max="100" value="0" step="0.1" />
+    <span id="pbDur">0:00</span>
+  </div>
+  <div class="pb-extra">
+    <label>Vol <input id="pbVol" type="range" min="0" max="100" /></label>
+    <button id="pbSubToggle" class="btn small">Subs: on</button>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div id="settingsModal" class="modal hidden">
+  <div class="modal-card">
+    <h2>Settings</h2>
+    <label>TMDB API Key
+      <input id="sTmdbKey" type="text" placeholder="paste your TMDB v3 API key" />
+    </label>
+    <label>Host <input id="sHost" type="text" /></label>
+    <label>Port <input id="sPort" type="number" /></label>
+    <label>Skip seconds <input id="sSkip" type="number" /></label>
+    <label>Theme
+      <select id="sTheme">
+        <option value="default">Default (Dark Red)</option>
+        <option value="kodi">Kodi (Blue)</option>
+        <option value="plex">Plex (Gold)</option>
+        <option value="media">Media Center (Neon)</option>
+      </select>
+    </label>
+    <h3>Library folders</h3>
+    <label>Add to category
+      <select id="fbCategory">
+        <option value="movie">Movies</option>
+        <option value="series">Series</option>
+        <option value="musical">Musicals</option>
+      </select>
+    </label>
+    <div id="movieLibList" class="lib-list"></div>
+    <div id="seriesLibList" class="lib-list"></div>
+    <div id="musicalLibList" class="lib-list"></div>
+    <div class="folder-browser">
+      <div class="fb-path"><input id="fbPath" type="text" placeholder="Path to browse or paste" /> <button id="fbGo" class="btn">Go</button></div>
+      <div id="fbDirs" class="fb-dirs"></div>
+      <button id="fbAdd" class="btn">Add this folder</button>
+    </div>
+    <div class="modal-actions">
+      <button id="sSave" class="btn primary">Save</button>
+      <button id="rescanBtn" class="btn">Rescan all metadata & art</button>
+      <button id="sClose" class="btn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Art picker modal -->
+<div id="artModal" class="modal hidden">
+  <div class="modal-card">
+    <h2>Choose media art from TMDB</h2>
+    <div class="fb-path">
+      <input id="artQuery" type="text" placeholder="Search title..." />
+      <button id="artSearchBtn" class="btn">Search</button>
+    </div>
+    <div class="fb-path" style="margin-top:8px;">
+      <input id="artTmdbInput" type="text" placeholder="Or paste TMDB URL or ID (e.g. 11822 or themoviedb.org/movie/11822)" />
+      <button id="artFetchBtn" class="btn">Fetch by ID</button>
+    </div>
+    <div id="artPreview" class="stream-results"></div>
+    <div id="artResults" class="stream-results"></div>
+    <div class="modal-actions">
+      <button id="artFrameBtn" class="btn">Use frame from movie</button>
+      <button id="artClose" class="btn">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

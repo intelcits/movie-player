@@ -1,0 +1,11 @@
+:root {
+  --bg: #050510;
+  --panel: #0d0d1f;
+  --panel2: #1a1a33;
+  --accent: #00e5ff;
+  --accent2: #ff00ff;
+  --text: #e0f7fa;
+  --muted: #80deea;
+  --border: #2a2a55;
+}
+body { background: radial-gradient(circle at top, #0d0d1f, #050510); }
