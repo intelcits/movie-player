@@ -56,7 +56,7 @@ if %errorlevel%==0 (
 ) else (
   powershell -NoProfile -Command "Start-Process -FilePath 'python' -ArgumentList 'movie_player.py' -WorkingDirectory '%~dp0' -WindowStyle Hidden -PassThru | Select-Object -ExpandProperty Id | Out-File -FilePath '%PIDFILE%' -Encoding ascii"
 )
-timeout /t 2 /nobreak >nul
+powershell -NoProfile -Command "Start-Sleep -Seconds 2" >nul 2>&1
 set /p PID=<"%PIDFILE%"
 echo Started (PID %PID%). Opening browser...
 start "" "http://127.0.0.1:8765/"
@@ -81,7 +81,7 @@ if exist "%PIDFILE%" (
   taskkill /PID %PID% /F >nul 2>&1
   del "%PIDFILE%" >nul 2>&1
 )
-timeout /t 1 /nobreak >nul
+powershell -NoProfile -Command "Start-Sleep -Seconds 1" >nul 2>&1
 goto start
 
 :already_running_start
