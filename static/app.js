@@ -78,6 +78,8 @@ async function loadConfig() {
   $("sTmdbKey").value = cfg.tmdb_api_key || "";
   $("sTheme").value = cfg.theme || "default";
   applyTheme(cfg.theme || "default");
+  $("sKiosk").checked = !!cfg.kiosk_mode;
+  $("sFullscreen").checked = cfg.fullscreen !== false;
   refreshLibLists();
   populateLibSelect();
 }
@@ -130,6 +132,9 @@ async function loadFilterOptions() {
   } catch (e) {}
 }
 
+let viewMode = "grid";
+let panelSideRight = true;
+
 async function loadMovies() {
   const params = new URLSearchParams();
   params.set("category", currentCategory);
@@ -140,9 +145,18 @@ async function loadMovies() {
   const d = $("fDirector").value; if (d) params.set("director", d);
   const a = $("fActor").value; if (a) params.set("actor", a);
   const y = $("fYear").value; if (y) params.set("year", y);
+  params.set("sort", $("sortSelect").value || "title_asc");
   const data = await api("/api/movies?" + params.toString());
   movies = data.movies || [];
-  renderGrid();
+  if (viewMode === "grid") {
+    $("grid").classList.remove("hidden");
+    $("splitView").classList.add("hidden");
+    renderGrid();
+  } else {
+    $("grid").classList.add("hidden");
+    $("splitView").classList.remove("hidden");
+    renderSplitView();
+  }
 }
 
 async function scan() {
@@ -569,6 +583,8 @@ $("sSave").onclick = async () => {
     port: parseInt($("sPort").value),
     skip_seconds: parseInt($("sSkip").value),
     theme: $("sTheme").value,
+    kiosk_mode: $("sKiosk").checked,
+    fullscreen: $("sFullscreen").checked,
   };
   await api("/api/config", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(cfg) });
   $("settingsModal").classList.add("hidden");
@@ -625,6 +641,90 @@ $("fbAdd").onclick = async () => {
 
 // filters
 $("filtersToggle").onclick = () => $("filtersPanel").classList.toggle("hidden");
+
+$("sortSelect").addEventListener("change", loadMovies);
+
+$("viewToggle").onclick = () => {
+  viewMode = viewMode === "grid" ? "split" : "grid";
+  $("viewToggle").textContent = viewMode === "grid" ? "Split view" : "Grid view";
+  $("panelSideToggle").classList.toggle("hidden", viewMode !== "split");
+  loadMovies();
+};
+
+$("panelSideToggle").onclick = () => {
+  panelSideRight = !panelSideRight;
+  $("panelSideToggle").textContent = panelSideRight ? "Panel: right" : "Panel: left";
+  const sv = $("splitView");
+  sv.classList.toggle("right", !panelSideRight);
+  renderSplitView();
+};
+
+function renderSplitView() {
+  const list = $("splitList");
+  const detail = $("splitDetail");
+  list.innerHTML = "";
+  detail.innerHTML = "<p style='color:var(--muted)'>Select a movie from the list.</p>";
+  movies.forEach((m) => {
+    const item = document.createElement("div");
+    item.className = "split-item";
+    item.textContent = (m.title || m.name) + (m.year ? " (" + m.year + ")" : "");
+    item.onclick = () => {
+      document.querySelectorAll(".split-item").forEach((x) => x.classList.remove("active"));
+      item.classList.add("active");
+      renderSplitDetail(m, detail);
+    };
+    list.appendChild(item);
+  });
+  if (movies.length) {
+    const firstItem = list.querySelector(".split-item");
+    if (firstItem) firstItem.click();
+  }
+}
+
+function renderSplitDetail(m, detail) {
+  detail.innerHTML = "";
+  const poster = imgUrl(m, "poster");
+  const backdrop = imgUrl(m, "backdrop");
+  if (backdrop) {
+    detail.style.backgroundImage = `url(${backdrop})`;
+    detail.style.backgroundSize = "cover";
+    detail.style.backgroundPosition = "center";
+  }
+  const div = document.createElement("div");
+  div.style.background = "rgba(15,17,21,.75)";
+  div.style.padding = "16px";
+  div.style.borderRadius = "8px";
+  div.innerHTML = `
+    <img class="sd-poster" src="${poster}" alt="" />
+    <div class="sd-title">${escapeHtml(m.title || m.name)}</div>
+    <div class="sd-meta">${m.year || ""} ${m.file_info ? "· " + escapeHtml(m.file_info) : ""}</div>
+    <div class="sd-meta">${escapeHtml((m.genres || []).join(", "))}</div>
+    <div class="sd-meta">${m.director ? "Director: " + escapeHtml(m.director) : ""}</div>
+    <div class="sd-meta">${m.country ? "Country: " + escapeHtml(m.country) : ""}</div>
+    <p class="overview">${escapeHtml(m.overview || "")}</p>
+    <div class="sd-actions">
+      <button class="btn primary" id="sdPlay">▶ Play</button>
+      <button class="btn" id="sdBrowser">Browser play</button>
+    </div>`;
+  detail.appendChild(div);
+  detail.querySelector("#sdPlay").onclick = async () => {
+    const sub = (m.subtitles && m.subtitles.length) ? m.subtitles[0].path : null;
+    currentSub = sub; subsOn = !!sub; currentMovie = m;
+    await api("/api/play", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: m.path, sub: subsOn ? sub : null }) });
+    showPlayerBar(m); startPolling();
+  };
+  detail.querySelector("#sdBrowser").onclick = () => {
+    window.open(`/player.html?path=${encodeURIComponent(m.path)}&sub=${encodeURIComponent((m.subtitles&&m.subtitles[0])?m.subtitles[0].path:"")}`, "_blank");
+  };
+  currentMovie = m;
+  // fetch subtitles
+  api(`/api/subtitles?path=${encodeURIComponent(m.path)}`).then((sdata) => {
+    if (sdata.subtitles && sdata.subtitles.length) {
+      currentSub = sdata.subtitles[0].path;
+      subsOn = true;
+    }
+  }).catch(()=>{});
+}
 $("fClear").onclick = () => {
   ["fGenre","fCountry","fDirector","fActor","fYear"].forEach((id) => { $(id).value = ""; });
   loadMovies();

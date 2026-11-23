@@ -54,6 +54,8 @@ DEFAULT_CONFIG = {
     "volume": 80,
     "skip_seconds": 10,
     "theme": "default",
+    "kiosk_mode": False,
+    "fullscreen": True,
 }
 
 
@@ -1500,6 +1502,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             genre = (qs.get("genre", [""])[0] or "").strip().lower()
             year = (qs.get("year", [""])[0] or "").strip()
             category = (qs.get("category", [""])[0] or "").strip().lower()
+            sort = (qs.get("sort", ["title_asc"])[0] or "title_asc").strip().lower()
             conn = db_conn()
             try:
                 rows = conn.execute("SELECT * FROM movies ORDER BY title").fetchall()
@@ -1508,9 +1511,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             finally:
                 conn.close()
             coll_map = {dict(c)["name"]: dict(c) for c in coll_rows}
+            rlist = [dict(r) for r in rows]
+            if sort == "title_desc":
+                rlist.sort(key=lambda r: (r.get("title") or "").lower(), reverse=True)
+            elif sort == "year_asc":
+                rlist.sort(key=lambda r: (r.get("year") or ""))
+            elif sort == "year_desc":
+                rlist.sort(key=lambda r: (r.get("year") or ""), reverse=True)
+            elif sort in ("recent", "recently_added", "newest"):
+                rlist.sort(key=lambda r: (r.get("scanned_at") or 0), reverse=True)
+            else:
+                rlist.sort(key=lambda r: (r.get("title") or "").lower())
+            rows = rlist
             out = []
             for r in rows:
-                r = dict(r)
+                r = dict(r) if not isinstance(r, dict) else r
                 if not os.path.isfile(r["path"]):
                     continue
                 if category and (r.get("category") or "movie").lower() != category:
@@ -1769,6 +1784,36 @@ class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 def open_browser(url):
+    kiosk = bool(CFG.get("kiosk_mode", False))
+    fullscreen = bool(CFG.get("fullscreen", True))
+    # try chrome/edge with app/kiosk mode
+    candidates = []
+    if os.name == "nt":
+        for p in (r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                  r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                  r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                  r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"):
+            if os.path.isfile(p):
+                candidates.append(p)
+    else:
+        for name in ("google-chrome", "chromium-browser", "chromium", "microsoft-edge"):
+            w = shutil.which(name)
+            if w:
+                candidates.append(w)
+    for exe in candidates:
+        try:
+            args = [exe]
+            if kiosk:
+                args += ["--kiosk", url]
+            else:
+                args += ["--app=" + url]
+                if fullscreen:
+                    args += ["--start-maximized"]
+            subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except Exception:
+            continue
+    # fallback
     try:
         import webbrowser
         webbrowser.open(url)
