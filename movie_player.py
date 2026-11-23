@@ -816,6 +816,10 @@ def convert_sub_to_vtt(sub_path):
         return None
 
 
+# ---------- server handle ----------
+HTTPD = None
+SHUTDOWN_REQUESTED = False
+
 # ---------- playback state ----------
 PLAYBACK = {
     "proc": None,
@@ -1652,6 +1656,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._send(404, "not found")
 
     def do_POST(self):
+        global SHUTDOWN_REQUESTED
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         length = int(self.headers.get("Content-Length", 0) or 0)
@@ -1767,6 +1772,39 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/volume":
             self._json(do_volume(data.get("volume", CFG.get("volume", 80))))
             return
+        if path == "/api/shutdown":
+            do_stop()
+            SHUTDOWN_REQUESTED = True
+            def _shutdown():
+                time.sleep(0.5)
+                try:
+                    if HTTPD is not None:
+                        HTTPD.shutdown()
+                except Exception:
+                    pass
+            threading.Thread(target=_shutdown, daemon=True).start()
+            self._json({"ok": True})
+            return
+        if path == "/api/restart":
+            do_stop()
+            # spawn a new instance
+            try:
+                subprocess.Popen([sys.executable, os.path.abspath(__file__)],
+                                 cwd=os.path.dirname(os.path.abspath(__file__)),
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+            except Exception:
+                pass
+            SHUTDOWN_REQUESTED = True
+            def _restart_shutdown():
+                time.sleep(1.0)
+                try:
+                    if HTTPD is not None:
+                        HTTPD.shutdown()
+                except Exception:
+                    pass
+            threading.Thread(target=_restart_shutdown, daemon=True).start()
+            self._json({"ok": True})
+            return
 
         self._json({"error": "not found"}, 404)
 
@@ -1822,9 +1860,11 @@ def open_browser(url):
 
 
 def main():
+    global HTTPD
     host = CFG.get("host", "127.0.0.1")
     port = int(CFG.get("port", 8765))
     httpd = ThreadingServer((host, port), Handler)
+    HTTPD = httpd
     url = f"http://{host}:{port}/"
     print(f"MoviePlayer running at {url}")
     print("Press Ctrl+C to stop.")
