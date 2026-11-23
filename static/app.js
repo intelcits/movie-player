@@ -576,6 +576,24 @@ $("rescanBtn").onclick = async () => {
     btn.disabled = false;
   }
 };
+
+$("serverCombo").addEventListener("change", async (e) => {
+  const val = e.target.value;
+  if (!val) return;
+  e.target.value = "";
+  if (val === "closeBrowser") {
+    window.close();
+  } else if (val === "restartServer") {
+    if (!confirm("Restart the MoviePlayer server?")) return;
+    try { await api("/api/restart", { method:"POST", headers:{"Content-Type":"application/json"}, body:"{}" }); } catch (err) {}
+    document.body.innerHTML = "<div style='text-align:center;padding:60px;color:#fff;font-family:sans-serif'><h1>Restarting…</h1><p>Reload this page in a few seconds.</p></div>";
+  } else if (val === "stopServer") {
+    if (!confirm("Stop the MoviePlayer server and close the browser?")) return;
+    try { await api("/api/shutdown", { method:"POST", headers:{"Content-Type":"application/json"}, body:"{}" }); } catch (err) {}
+    setTimeout(() => window.close(), 800);
+    document.body.innerHTML = "<div style='text-align:center;padding:60px;color:#fff;font-family:sans-serif'><h1>Server stopped.</h1><p>You can close this tab.</p></div>";
+  }
+});
 $("sSave").onclick = async () => {
   const cfg = {
     tmdb_api_key: $("sTmdbKey").value.trim(),
