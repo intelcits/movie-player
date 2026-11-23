@@ -1859,8 +1859,27 @@ def open_browser(url):
         pass
 
 
+PID_FILE = HERE / "movie_player.pid"
+
+
+def write_pid_file():
+    try:
+        PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def remove_pid_file():
+    try:
+        if PID_FILE.exists() and PID_FILE.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            PID_FILE.unlink()
+    except Exception:
+        pass
+
+
 def main():
     global HTTPD
+    write_pid_file()
     host = CFG.get("host", "127.0.0.1")
     port = int(CFG.get("port", 8765))
     httpd = ThreadingServer((host, port), Handler)
@@ -1875,6 +1894,7 @@ def main():
         print("\nShutting down...")
     finally:
         do_stop()
+        remove_pid_file()
         httpd.server_close()
 
 
