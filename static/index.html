@@ -13,7 +13,6 @@
   <nav class="tabs">
     <button class="tab-btn active" data-tab="movies">Movies</button>
     <button class="tab-btn" data-tab="series">Series</button>
-    <button class="tab-btn" data-tab="musicals">Musicals</button>
     <button class="tab-btn" data-tab="streaming">Streaming</button>
   </nav>
   <div class="top-controls">
@@ -116,6 +115,11 @@
       <span>Searching streaming sites…</span>
     </div>
     <div id="streamPlayer" class="stream-player hidden"></div>
+    <h3>My Wishlist</h3>
+    <div id="wishlistResults" class="stream-results"></div>
+    <h3>TMDB Watchlist</h3>
+    <div id="tmdbWatchlist" class="stream-results"></div>
+    <h3>Search Results</h3>
     <div id="streamResults" class="stream-results"></div>
     <div id="streamSites" class="stream-sites"></div>
   </section>
@@ -174,12 +178,10 @@
       <select id="fbCategory">
         <option value="movie">Movies</option>
         <option value="series">Series</option>
-        <option value="musical">Musicals</option>
       </select>
     </label>
     <div id="movieLibList" class="lib-list"></div>
     <div id="seriesLibList" class="lib-list"></div>
-    <div id="musicalLibList" class="lib-list"></div>
     <div class="folder-browser">
       <div class="fb-path"><input id="fbPath" type="text" placeholder="Path to browse or paste" /> <button id="fbGo" class="btn">Go</button></div>
       <div id="fbDirs" class="fb-dirs"></div>

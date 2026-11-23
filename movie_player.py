@@ -48,6 +48,7 @@ DEFAULT_CONFIG = {
     "series_dirs": [],
     "musical_dirs": [],
     "tmdb_api_key": "",
+    "tmdb_session_id": "",
     "ffplay_path": "ffplay",
     "ffprobe_path": "ffprobe",
     "ffmpeg_path": "ffmpeg",
@@ -70,8 +71,15 @@ def load_config():
     # migrate old media_dirs -> movie_dirs
     if cfg.get("media_dirs") and not cfg.get("movie_dirs"):
         cfg["movie_dirs"] = list(cfg.get("media_dirs") or [])
+    # migrate musical_dirs -> movie_dirs
+    if cfg.get("musical_dirs"):
+        for d in cfg.get("musical_dirs") or []:
+            if d not in cfg.setdefault("movie_dirs", []):
+                cfg["movie_dirs"].append(d)
+        cfg["musical_dirs"] = []
     for k in ("movie_dirs", "series_dirs", "musical_dirs"):
         cfg.setdefault(k, [])
+    cfg.setdefault("tmdb_session_id", "")
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
     VTT_DIR.mkdir(parents=True, exist_ok=True)
@@ -136,6 +144,20 @@ def init_db():
             conn.execute("ALTER TABLE movies ADD COLUMN category TEXT")
         if "collection" not in cols:
             conn.execute("ALTER TABLE movies ADD COLUMN collection TEXT")
+        # migrate musical -> movie
+        conn.execute("UPDATE movies SET category='movie' WHERE category='musical'")
+        # streaming favorites
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS streaming_favorites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tmdb_id INTEGER,
+            title TEXT,
+            year TEXT,
+            poster TEXT,
+            media_type TEXT DEFAULT 'movie',
+            added_at REAL
+        )
+        """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_title ON movies(title)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_year ON movies(year)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_movies_country ON movies(country)")
@@ -1200,6 +1222,68 @@ def get_streaming_sites():
         conn.close()
 
 
+def get_favorites():
+    conn = db_conn()
+    try:
+        rows = conn.execute("SELECT * FROM streaming_favorites ORDER BY added_at DESC").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def add_favorite(tmdb_id, title, year, poster, media_type="movie"):
+    conn = db_conn()
+    try:
+        # avoid dup
+        existing = conn.execute("SELECT id FROM streaming_favorites WHERE tmdb_id=? AND media_type=?", (tmdb_id, media_type)).fetchone()
+        if existing:
+            return dict(existing)
+        conn.execute("INSERT INTO streaming_favorites (tmdb_id,title,year,poster,media_type,added_at) VALUES (?,?,?,?,?,?)",
+                     (tmdb_id, title, year, poster, media_type, time.time()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_favorite(tmdb_id, media_type="movie"):
+    conn = db_conn()
+    try:
+        conn.execute("DELETE FROM streaming_favorites WHERE tmdb_id=? AND media_type=?", (tmdb_id, media_type))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def tmdb_watchlist():
+    key = (CFG.get("tmdb_api_key") or "").strip()
+    sess = (CFG.get("tmdb_session_id") or "").strip()
+    if not key or not sess or not HAS_REQUESTS:
+        return []
+    try:
+        # get account id
+        r = requests.get("https://api.themoviedb.org/3/account", params={"api_key": key, "session_id": sess}, timeout=12)
+        acc = r.json()
+        acc_id = acc.get("id")
+        if not acc_id:
+            return []
+        out = []
+        for mt in ("movies", "tv"):
+            endpoint = "movies" if mt == "movies" else "tv"
+            r = requests.get(f"https://api.themoviedb.org/3/account/{acc_id}/watchlist/{endpoint}",
+                             params={"api_key": key, "session_id": sess, "sort_by": "created_at.desc"}, timeout=12)
+            for m in (r.json().get("results") or [])[:40]:
+                out.append({
+                    "id": m.get("id"),
+                    "title": m.get("title") or m.get("name"),
+                    "year": (m.get("release_date") or m.get("first_air_date") or "")[:4],
+                    "poster": ("https://image.tmdb.org/t/p/w342" + m["poster_path"]) if m.get("poster_path") else None,
+                    "media_type": "movie" if mt == "movies" else "tv",
+                })
+        return out
+    except Exception:
+        return []
+
+
 def list_dirs(path):
     if not path:
         return list_drives()
@@ -1592,6 +1676,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             sites = get_streaming_sites()
             self._json({"sites": sites, "count": len(sites)})
             return
+        if path == "/api/streaming/favorites":
+            self._json({"favorites": get_favorites()})
+            return
+        if path == "/api/streaming/watchlist":
+            self._json({"watchlist": tmdb_watchlist()})
+            return
         if path == "/api/streaming/search":
             q = urllib.parse.unquote(qs.get("q", [""])[0] or "")
             # TMDB search for movie and tv
@@ -1771,6 +1861,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/volume":
             self._json(do_volume(data.get("volume", CFG.get("volume", 80))))
+            return
+        if path == "/api/streaming/favorite":
+            add_favorite(data.get("tmdb_id"), data.get("title"), data.get("year"), data.get("poster"), data.get("media_type", "movie"))
+            self._json({"ok": True})
+            return
+        if path == "/api/streaming/unfavorite":
+            remove_favorite(data.get("tmdb_id"), data.get("media_type", "movie"))
+            self._json({"ok": True})
             return
         if path == "/api/shutdown":
             do_stop()
