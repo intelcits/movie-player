@@ -107,6 +107,20 @@ main { position:relative; z-index:1; }
 
 /* toolbar */
 .toolbar { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+.toolbar select { padding:7px 10px; border-radius:6px; border:1px solid var(--border); background:var(--panel2); color:var(--text); }
+
+/* split view */
+.split-view { display:flex; gap:12px; height:70vh; }
+.split-view.right { flex-direction: row-reverse; }
+.split-list { flex:1; overflow:auto; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:8px; }
+.split-detail { flex:2; overflow:auto; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:16px; position:relative; }
+.split-item { padding:8px 10px; border-bottom:1px solid var(--border); cursor:pointer; font-size:13px; }
+.split-item:hover { background:var(--panel2); }
+.split-item.active { background:var(--accent); color:#fff; }
+.split-detail .sd-poster { width:160px; border-radius:8px; }
+.split-detail .sd-title { font-size:18px; font-weight:700; margin:8px 0; }
+.split-detail .sd-meta { color:var(--muted); font-size:13px; margin-bottom:8px; }
+.split-detail .sd-actions { display:flex; gap:8px; margin:12px 0; }
 .toolbar input { flex:1; min-width:200px; padding:7px 10px; border-radius:6px; border:1px solid var(--border); background:var(--panel2); color:var(--text); }
 .filters-panel { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; background:var(--panel); padding:10px; border-radius:8px; border:1px solid var(--border); }
 .filters-panel select { padding:6px 8px; border-radius:6px; border:1px solid var(--border); background:var(--panel2); color:var(--text); }

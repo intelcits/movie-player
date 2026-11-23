@@ -26,6 +26,15 @@
   <section id="libraryView">
     <div class="toolbar">
       <input id="searchBox" type="search" placeholder="Search..." />
+      <select id="sortSelect">
+        <option value="title_asc">Title A→Z</option>
+        <option value="title_desc">Title Z→A</option>
+        <option value="year_asc">Year ↑</option>
+        <option value="year_desc">Year ↓</option>
+        <option value="recent">Recently added</option>
+      </select>
+      <button id="viewToggle" class="btn">Split view</button>
+      <button id="panelSideToggle" class="btn hidden">Panel: right</button>
       <button id="scanBtn" class="btn">Scan</button>
       <button id="filtersToggle" class="btn">Filters</button>
     </div>
@@ -41,6 +50,10 @@
       <p>No media loaded. Add a folder in ⚙ Settings, then Scan.</p>
     </div>
     <div id="grid" class="grid"></div>
+    <div id="splitView" class="split-view hidden">
+      <div id="splitList" class="split-list"></div>
+      <div id="splitDetail" class="split-detail"></div>
+    </div>
   </section>
 
   <!-- Collection view -->
@@ -148,6 +161,8 @@
         <option value="media">Media Center (Neon)</option>
       </select>
     </label>
+    <label><input type="checkbox" id="sKiosk" /> Kiosk mode (fullscreen, no controls)</label>
+    <label><input type="checkbox" id="sFullscreen" checked /> Start maximized</label>
     <h3>Library folders</h3>
     <label>Add to category
       <select id="fbCategory">
