@@ -43,11 +43,10 @@ BROWSER_PLAYABLE = {".mp4", ".webm", ".ogv", ".m4v"}
 DEFAULT_CONFIG = {
     "host": "127.0.0.1",
     "port": 8765,
-    "media_dirs": [],
     "movie_dirs": [],
     "series_dirs": [],
-    "musical_dirs": [],
     "tmdb_api_key": "",
+    "tmdb_session_id": "",
     "tmdb_session_id": "",
     "ffplay_path": "ffplay",
     "ffprobe_path": "ffprobe",
@@ -76,8 +75,10 @@ def load_config():
         for d in cfg.get("musical_dirs") or []:
             if d not in cfg.setdefault("movie_dirs", []):
                 cfg["movie_dirs"].append(d)
-        cfg["musical_dirs"] = []
-    for k in ("movie_dirs", "series_dirs", "musical_dirs"):
+    # migrate media_dirs -> movie_dirs
+    if cfg.get("media_dirs") and not cfg.get("movie_dirs"):
+        cfg["movie_dirs"] = list(cfg.get("media_dirs") or [])
+    for k in ("movie_dirs", "series_dirs"):
         cfg.setdefault(k, [])
     cfg.setdefault("tmdb_session_id", "")
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1462,7 +1463,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 dirs_to_scan = [d]
             else:
                 key = (category or "movie") + "_dirs"
-                dirs_to_scan = CFG.get(key, []) or CFG.get("media_dirs", [])
+                dirs_to_scan = CFG.get(key, [])
             results = []
             for root in dirs_to_scan:
                 rp = norm_path(root)

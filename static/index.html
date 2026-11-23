@@ -160,6 +160,9 @@
     <label>TMDB API Key
       <input id="sTmdbKey" type="text" placeholder="paste your TMDB v3 API key" />
     </label>
+    <label>TMDB Session ID (optional, for watchlist)
+      <input id="sTmdbSession" type="text" placeholder="paste your TMDB session id" />
+    </label>
     <label>Host <input id="sHost" type="text" /></label>
     <label>Port <input id="sPort" type="number" /></label>
     <label>Skip seconds <input id="sSkip" type="number" /></label>
@@ -198,14 +201,22 @@
 <!-- Art picker modal -->
 <div id="artModal" class="modal hidden">
   <div class="modal-card">
-    <h2>Choose media art from TMDB</h2>
+    <h2>Choose Media Art</h2>
     <div class="fb-path">
-      <input id="artQuery" type="text" placeholder="Search title..." />
-      <button id="artSearchBtn" class="btn">Search</button>
+      <input id="artQuery" type="text" placeholder="Search TMDB by title..." />
+      <button id="artSearchBtn" class="btn">Search TMDB</button>
     </div>
     <div class="fb-path" style="margin-top:8px;">
-      <input id="artTmdbInput" type="text" placeholder="Or paste TMDB URL or ID (e.g. 11822 or themoviedb.org/movie/11822)" />
+      <input id="artTmdbInput" type="text" placeholder="TMDB URL or ID (e.g. 11822 or themoviedb.org/movie/11822)" />
       <button id="artFetchBtn" class="btn">Fetch by ID</button>
+    </div>
+    <div class="fb-path" style="margin-top:8px;">
+      <input id="artGoogleQuery" type="text" placeholder="Or search Google Images for media art..." />
+      <button id="artGoogleBtn" class="btn">Search Google Images</button>
+    </div>
+    <div class="fb-path" style="margin-top:8px;">
+      <input id="artUrlInput" type="text" placeholder="Or paste an image URL to use as art" />
+      <button id="artUrlBtn" class="btn">Use this URL</button>
     </div>
     <div id="artPreview" class="stream-results"></div>
     <div id="artResults" class="stream-results"></div>

@@ -40,7 +40,7 @@ Then open http://127.0.0.1:8765
 - Controls hide automatically when playback stops or finishes.
 - Movie detail view uses the backdrop art as a visible background.
 - Choose from 4 UI themes (Default, Kodi, Plex, Media Center) in Settings.
-- "Change art" button: search TMDB for alternative posters/backdrops and pick one, or use a frame from the movie, or paste a TMDB URL/ID.
+- "Choose Media Art" button: search TMDB by title, fetch by TMDB URL/ID, search Google Images, or paste any image URL.
 - Sort movies by title, year, or recently added.
 - Streaming: Favorites/Wishlist (add/remove), click to search. TMDB Watchlist shown if session ID configured.
 - Streaming: removed DuckDuckGo option; embedded player opens in new tab.
@@ -53,7 +53,7 @@ Then open http://127.0.0.1:8765
 
 ## Settings
 - Library folders: browse the filesystem and add folders (e.g. `D:\Torrent_Downloads`), or paste a path.
-- TMDB API key, host, port, skip seconds.
+- TMDB API key, TMDB session ID (optional, for watchlist), host, port, skip seconds.
 - ffplay/ffprobe/ffmpeg paths (if not on PATH).
 
 ## Notes
