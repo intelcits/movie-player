@@ -17,10 +17,13 @@ start_app() {
   elif command -v python >/dev/null 2>&1; then PY=python
   else echo "Python not found."; return 1; fi
   nohup "$PY" movie_player.py >/dev/null 2>&1 &
-  echo $! > "$PIDFILE"
   sleep 2
-  PID=$(cat "$PIDFILE")
-  echo "Started (PID $PID). Opening browser..."
+  if [ -f "$PIDFILE" ]; then
+    PID=$(cat "$PIDFILE")
+    echo "Started (PID $PID). Opening browser..."
+  else
+    echo "Started. Opening browser..."
+  fi
   if command -v xdg-open >/dev/null 2>&1; then
     xdg-open "http://127.0.0.1:8765/" >/dev/null 2>&1 &
   fi

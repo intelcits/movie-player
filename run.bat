@@ -29,9 +29,9 @@ goto end
 echo Starting MoviePlayer...
 where py >nul 2>&1
 if %errorlevel%==0 (
-  powershell -NoProfile -Command "Start-Process -FilePath 'py' -ArgumentList '-3 movie_player.py' -WorkingDirectory '%~dp0' -WindowStyle Hidden -PassThru | Select-Object -ExpandProperty Id | Out-File -FilePath '%PIDFILE%' -Encoding ascii"
+  powershell -NoProfile -Command "Start-Process -FilePath 'py' -ArgumentList '-3 movie_player.py' -WorkingDirectory '%~dp0' -WindowStyle Hidden"
 ) else (
-  powershell -NoProfile -Command "Start-Process -FilePath 'python' -ArgumentList 'movie_player.py' -WorkingDirectory '%~dp0' -WindowStyle Hidden -PassThru | Select-Object -ExpandProperty Id | Out-File -FilePath '%PIDFILE%' -Encoding ascii"
+  powershell -NoProfile -Command "Start-Process -FilePath 'python' -ArgumentList 'movie_player.py' -WorkingDirectory '%~dp0' -WindowStyle Hidden"
 )
 echo Started. The browser will open automatically.
 goto end
