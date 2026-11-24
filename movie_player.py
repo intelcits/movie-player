@@ -98,8 +98,13 @@ IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def db_conn():
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=30)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
     return conn
 
 
@@ -132,6 +137,13 @@ def init_db():
             file_info TEXT,
             category TEXT,
             collection TEXT,
+            resume_position REAL,
+            tagline TEXT,
+            trailer_key TEXT,
+            cast_json TEXT,
+            similar_json TEXT,
+            collection_name TEXT,
+            collection_id INTEGER,
             file_mtime REAL,
             scanned_at REAL,
             sub_count INTEGER DEFAULT 0
@@ -145,6 +157,12 @@ def init_db():
             conn.execute("ALTER TABLE movies ADD COLUMN category TEXT")
         if "collection" not in cols:
             conn.execute("ALTER TABLE movies ADD COLUMN collection TEXT")
+        if "resume_position" not in cols:
+            conn.execute("ALTER TABLE movies ADD COLUMN resume_position REAL")
+        # extra TMDB metadata
+        for col in ("tagline", "trailer_key", "cast_json", "similar_json", "collection_name", "collection_id"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE movies ADD COLUMN {col} TEXT")
         # migrate musical -> movie
         conn.execute("UPDATE movies SET category='movie' WHERE category='musical'")
         # streaming favorites
@@ -197,13 +215,27 @@ _tmdb_cache = {}
 if TMDB_CACHE_FILE.exists():
     try:
         _tmdb_cache = json.loads(TMDB_CACHE_FILE.read_text(encoding="utf-8"))
+        # drop stale detail entries that predate cast/trailer/similar fields
+        _tmdb_cache = {
+            k: v for k, v in _tmdb_cache.items()
+            if not (k.startswith("details|") and isinstance(v, dict) and "similar" not in v)
+        }
     except Exception:
         _tmdb_cache = {}
 
 
-def save_tmdb_cache():
+_TMDB_CACHE_LOCK = threading.Lock()
+_TMDB_SAVE_TS = [0.0]
+
+
+def save_tmdb_cache(force=False):
     try:
-        TMDB_CACHE_FILE.write_text(json.dumps(_tmdb_cache, ensure_ascii=False), encoding="utf-8")
+        with _TMDB_CACHE_LOCK:
+            now = time.time()
+            if not force and now - _TMDB_SAVE_TS[0] < 3:
+                return
+            _TMDB_SAVE_TS[0] = now
+            TMDB_CACHE_FILE.write_text(json.dumps(_tmdb_cache, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
 
@@ -394,8 +426,9 @@ def upsert_movie_db(data):
         conn.execute("""
         INSERT INTO movies (path,title,year,tmdb_id,overview,genres,runtime,director,"cast",country,
             rating,poster_url,backdrop_url,poster_local,backdrop_local,duration,width,height,codec,audio,
-            file_info,category,collection,file_mtime,scanned_at,sub_count)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            file_info,category,collection,resume_position,tagline,trailer_key,cast_json,similar_json,
+            collection_name,collection_id,file_mtime,scanned_at,sub_count)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(path) DO UPDATE SET
             title=excluded.title, year=excluded.year, tmdb_id=excluded.tmdb_id, overview=excluded.overview,
             genres=excluded.genres, runtime=excluded.runtime, director=excluded.director, "cast"=excluded."cast",
@@ -403,7 +436,9 @@ def upsert_movie_db(data):
             backdrop_url=excluded.backdrop_url, poster_local=excluded.poster_local, backdrop_local=excluded.backdrop_local,
             duration=excluded.duration, width=excluded.width, height=excluded.height, codec=excluded.codec,
             audio=excluded.audio, file_info=excluded.file_info, category=excluded.category, collection=excluded.collection,
-            file_mtime=excluded.file_mtime, scanned_at=excluded.scanned_at, sub_count=excluded.sub_count
+            resume_position=excluded.resume_position, tagline=excluded.tagline, trailer_key=excluded.trailer_key,
+            cast_json=excluded.cast_json, similar_json=excluded.similar_json, collection_name=excluded.collection_name,
+            collection_id=excluded.collection_id, file_mtime=excluded.file_mtime, scanned_at=excluded.scanned_at, sub_count=excluded.sub_count
         """, (
             data.get("path"), data.get("title"), data.get("year"), data.get("tmdb_id"),
             data.get("overview"), json.dumps(data.get("genres") or []), data.get("runtime"),
@@ -411,7 +446,10 @@ def upsert_movie_db(data):
             data.get("rating"), data.get("poster_url"), data.get("backdrop_url"),
             data.get("poster_local"), data.get("backdrop_local"), data.get("duration"),
             data.get("width"), data.get("height"), data.get("codec"), data.get("audio"),
-            data.get("file_info"), data.get("category"), data.get("collection"), data.get("mtime"), time.time(), data.get("sub_count", 0),
+            data.get("file_info"), data.get("category"), data.get("collection"), data.get("resume_position"),
+            data.get("tagline"), data.get("trailer_key"), json.dumps(data.get("cast_full") or []),
+            json.dumps(data.get("similar") or []), data.get("collection_name"), data.get("collection_id"),
+            data.get("mtime"), time.time(), data.get("sub_count", 0),
         ))
         conn.commit()
     finally:
@@ -464,21 +502,32 @@ def upsert_collection(name, poster_url=None, backdrop_url=None, poster_local=Non
 
 def enrich_entry(entry, category=None, force=False):
     path = entry["path"]
-    info = ffprobe_info(path)
-    entry["duration"] = info.get("duration")
-    entry["width"] = info.get("width")
-    entry["height"] = info.get("height")
-    entry["codec"] = info.get("codec")
-    entry["audio"] = info.get("audio")
-    entry["audio_channels"] = info.get("audio_channels")
     entry["category"] = category or entry.get("category")
-    entry["file_info"] = compute_file_info(info)
     mtime = entry.get("mtime")
     existing = get_db_movie(path)
     # decide if TMDB fetch needed
     need_fetch = True
     if not force and existing and existing.get("tmdb_id") and mtime is not None and existing.get("file_mtime") == mtime:
         need_fetch = False
+    # only probe when we fetch or when the DB has no probe data
+    if need_fetch or not existing or not existing.get("file_info"):
+        info = ffprobe_info(path)
+        entry["duration"] = info.get("duration")
+        entry["width"] = info.get("width")
+        entry["height"] = info.get("height")
+        entry["codec"] = info.get("codec")
+        entry["audio"] = info.get("audio")
+        entry["audio_channels"] = info.get("audio_channels")
+        entry["file_info"] = compute_file_info(info)
+    else:
+        info = {}
+        entry["duration"] = existing.get("duration")
+        entry["width"] = existing.get("width")
+        entry["height"] = existing.get("height")
+        entry["codec"] = existing.get("codec")
+        entry["audio"] = existing.get("audio")
+        entry["audio_channels"] = existing.get("audio_channels")
+        entry["file_info"] = existing.get("file_info")
     # load from db if no fetch
     if not need_fetch and existing:
         # reuse already-probed info for file_info (cheap)
@@ -490,7 +539,11 @@ def enrich_entry(entry, category=None, force=False):
         entry["audio_channels"] = info.get("audio_channels") or existing.get("audio_channels")
         entry["file_info"] = compute_file_info(info) or existing.get("file_info")
         entry["tmdb_id"] = existing.get("tmdb_id")
+        entry["title"] = existing.get("title") or entry.get("title")
+        entry["year"] = existing.get("year") or entry.get("year")
         entry["overview"] = existing.get("overview")
+        entry["tagline"] = existing.get("tagline")
+        entry["trailer_key"] = existing.get("trailer_key")
         try:
             entry["genres"] = json.loads(existing.get("genres") or "[]")
         except Exception:
@@ -501,10 +554,23 @@ def enrich_entry(entry, category=None, force=False):
             entry["cast"] = json.loads(existing.get("cast") or "[]")
         except Exception:
             entry["cast"] = []
+        try:
+            entry["cast_full"] = json.loads(existing.get("cast_json") or "[]")
+        except Exception:
+            entry["cast_full"] = []
+        try:
+            entry["similar"] = json.loads(existing.get("similar_json") or "[]")
+        except Exception:
+            entry["similar"] = []
         entry["country"] = existing.get("country")
         entry["rating"] = existing.get("rating")
         entry["poster_url"] = existing.get("poster_url")
         entry["backdrop_url"] = existing.get("backdrop_url")
+        entry["poster_local"] = existing.get("poster_local")
+        entry["backdrop_local"] = existing.get("backdrop_local")
+        entry["collection_name"] = existing.get("collection_name")
+        entry["collection_id"] = existing.get("collection_id")
+        entry["resume_position"] = existing.get("resume_position")
         if force:
             entry["poster_local"] = cache_image(entry.get("poster_url"), force=True)
             entry["backdrop_local"] = cache_image(entry.get("backdrop_url"), force=True)
@@ -523,6 +589,7 @@ def enrich_entry(entry, category=None, force=False):
         # TMDB fetch
         title = entry.get("title")
         year = entry.get("year")
+        entry["resume_position"] = existing.get("resume_position") if existing else None
         search_res = tmdb_search(title, year)
         tmdb_id = search_res.get("id") if search_res else None
         details = tmdb_details(tmdb_id) if tmdb_id else None
@@ -540,6 +607,12 @@ def enrich_entry(entry, category=None, force=False):
             entry["rating"] = details.get("rating")
             entry["poster_url"] = details.get("poster_url")
             entry["backdrop_url"] = details.get("backdrop_url")
+            entry["tagline"] = details.get("tagline")
+            entry["trailer_key"] = details.get("trailer_key")
+            entry["cast_full"] = details.get("cast_full") or []
+            entry["similar"] = details.get("similar") or []
+            entry["collection_name"] = details.get("collection_name")
+            entry["collection_id"] = details.get("collection_id")
         else:
             entry["tmdb_id"] = tmdb_id
             entry["overview"] = search_res.get("overview") if search_res else None
@@ -576,6 +649,13 @@ def enrich_entry(entry, category=None, force=False):
         "backdrop_url": entry.get("backdrop_url"),
         "poster_local": entry.get("poster_local"),
         "backdrop_local": entry.get("backdrop_local"),
+        "resume_position": entry.get("resume_position"),
+        "tagline": entry.get("tagline"),
+        "trailer_key": entry.get("trailer_key"),
+        "cast_full": entry.get("cast_full"),
+        "similar": entry.get("similar"),
+        "collection_name": entry.get("collection_name"),
+        "collection_id": entry.get("collection_id"),
         "duration": entry.get("duration"),
         "width": entry.get("width"),
         "height": entry.get("height"),
@@ -724,11 +804,13 @@ def tmdb_details(tmdb_id):
     key = (CFG.get("tmdb_api_key") or "").strip()
     if not key or not HAS_REQUESTS or not tmdb_id:
         return None
-    cache_key = f"details|{tmdb_id}"
+    cache_key = f"details_v2|{tmdb_id}"
     if cache_key in _tmdb_cache:
         return _tmdb_cache[cache_key]
     data = {}
     cred = {}
+    videos = {}
+    similar = {}
     for _attempt in range(3):
         try:
             r = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}", params={"api_key": key, "language": "en-US"}, timeout=12)
@@ -739,6 +821,20 @@ def tmdb_details(tmdb_id):
             if r2.status_code == 429:
                 time.sleep(2); continue
             cred = r2.json() if r2.status_code == 200 else {}
+            # videos (trailers)
+            try:
+                r3 = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}/videos", params={"api_key": key, "language": "en-US"}, timeout=12)
+                if r3.status_code == 200:
+                    videos = r3.json()
+            except Exception:
+                pass
+            # similar
+            try:
+                r4 = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}/similar", params={"api_key": key}, timeout=12)
+                if r4.status_code == 200:
+                    similar = r4.json()
+            except Exception:
+                pass
             break
         except Exception as e:
             return {"error": str(e)}
@@ -754,19 +850,54 @@ def tmdb_details(tmdb_id):
     backdrop_path = data.get("backdrop_path")
     poster_url = ("https://image.tmdb.org/t/p/w500" + poster_path) if poster_path else None
     backdrop_url = ("https://image.tmdb.org/t/p/w1280" + backdrop_path) if backdrop_path else None
+    # trailer key
+    trailer_key = None
+    for v in (videos.get("results") or []):
+        if v.get("site") == "YouTube" and v.get("type") in ("Trailer", "Teaser"):
+            trailer_key = v.get("key")
+            break
+    # cast with photos
+    cast_full = []
+    for c in (cred.get("cast") or [])[:18]:
+        if c.get("name"):
+            cast_full.append({
+                "name": c.get("name"),
+                "character": c.get("character"),
+                "profile": ("https://image.tmdb.org/t/p/w185" + c["profile_path"]) if c.get("profile_path") else None,
+            })
+    # similar movies
+    similar_list = []
+    for m in (similar.get("results") or [])[:12]:
+        if m.get("title"):
+            similar_list.append({
+                "id": m.get("id"),
+                "title": m.get("title"),
+                "year": (m.get("release_date") or "")[:4],
+                "poster": ("https://image.tmdb.org/t/p/w185" + m["poster_path"]) if m.get("poster_path") else None,
+            })
+    # collection
+    coll = data.get("belongs_to_collection")
+    collection_name = coll.get("name") if coll else None
+    collection_id = coll.get("id") if coll else None
     out = {
         "tmdb_id": data.get("id"),
         "title": data.get("title"),
         "year": (data.get("release_date") or "")[:4],
         "overview": data.get("overview"),
+        "tagline": data.get("tagline"),
         "genres": genres,
         "runtime": data.get("runtime"),
         "director": director,
-        "cast": cast,
+        "cast": [c["name"] for c in cast_full],
+        "cast_full": cast_full,
         "country": ", ".join(countries) if countries else None,
         "rating": data.get("vote_average"),
         "poster_url": poster_url,
         "backdrop_url": backdrop_url,
+        "trailer_key": trailer_key,
+        "similar": similar_list,
+        "collection_name": collection_name,
+        "collection_id": collection_id,
     }
     _tmdb_cache[cache_key] = out
     save_tmdb_cache()
@@ -983,9 +1114,24 @@ def _launch_ffplay(path, sub, pos, volume, gen):
             pass
         # only update if still current generation
         if PLAYBACK["gen"] == g and PLAYBACK["proc"] is p:
-            # process ended naturally
+            # process ended: finished vs. closed mid-way
             if PLAYBACK["playing"] and not PLAYBACK["paused"]:
-                PLAYBACK["pos"] = PLAYBACK["duration"] if PLAYBACK["duration"] else current_position()
+                end_pos = current_position()
+                dur = PLAYBACK["duration"]
+                if dur and end_pos >= dur - 5:
+                    PLAYBACK["pos"] = dur
+                    if PLAYBACK["path"]:
+                        try:
+                            _save_resume_position(PLAYBACK["path"], 0.0)
+                        except Exception:
+                            pass
+                else:
+                    PLAYBACK["pos"] = end_pos
+                    if PLAYBACK["path"] and end_pos > 10:
+                        try:
+                            _save_resume_position(PLAYBACK["path"], end_pos)
+                        except Exception:
+                            pass
             PLAYBACK["playing"] = False
             PLAYBACK["paused"] = False
             PLAYBACK["proc"] = None
@@ -995,10 +1141,31 @@ def _launch_ffplay(path, sub, pos, volume, gen):
     return proc
 
 
+def _save_resume_position(path, pos):
+    try:
+        conn = db_conn()
+        conn.execute("UPDATE movies SET resume_position=? WHERE path=?", (float(pos), path))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def do_play(path, sub=None, ss=None, volume=None):
     path = norm_path(path)
     if not path or not os.path.isfile(path):
         return {"error": "file not found"}
+    # resume from saved position if not explicitly seeking
+    auto_resume = False
+    if ss is None:
+        try:
+            existing = get_db_movie(path)
+            rp = existing.get("resume_position") if existing else None
+            if rp and rp > 10:
+                ss = rp
+                auto_resume = True
+        except Exception:
+            pass
     # kill existing
     _kill_proc(PLAYBACK["proc"])
     PLAYBACK["proc"] = None
@@ -1023,6 +1190,9 @@ def do_play(path, sub=None, ss=None, volume=None):
         pos = 0.0
     if PLAYBACK["duration"] and pos > PLAYBACK["duration"]:
         pos = PLAYBACK["duration"]
+    # nearly finished: start from the beginning instead of resuming
+    if auto_resume and PLAYBACK["duration"] and pos > PLAYBACK["duration"] - 120:
+        pos = 0.0
     PLAYBACK["pos"] = pos
     gen = PLAYBACK["gen"] + 1
     proc = _launch_ffplay(path, PLAYBACK["sub"], pos, PLAYBACK["volume"], gen)
@@ -1039,6 +1209,7 @@ def do_pause():
     if not PLAYBACK["playing"] or PLAYBACK["paused"]:
         return playback_status()
     PLAYBACK["pos"] = current_position()
+    _save_resume_position(PLAYBACK["path"], PLAYBACK["pos"])
     _kill_proc(PLAYBACK["proc"])
     PLAYBACK["proc"] = None
     PLAYBACK["paused"] = True
@@ -1062,11 +1233,17 @@ def do_resume():
 
 
 def do_stop():
+    if PLAYBACK["path"]:
+        try:
+            _save_resume_position(PLAYBACK["path"], current_position())
+        except Exception:
+            pass
     _kill_proc(PLAYBACK["proc"])
     PLAYBACK["proc"] = None
     PLAYBACK["playing"] = False
     PLAYBACK["paused"] = False
     PLAYBACK["pos"] = 0.0
+    # reset resume position on full stop? keep it so user can resume later
     return playback_status()
 
 
@@ -1132,6 +1309,17 @@ def do_skip(delta):
 
 
 def playback_status():
+    # persist resume position periodically while playing
+    try:
+        if PLAYBACK["playing"] and not PLAYBACK["paused"] and PLAYBACK["path"]:
+            now = time.monotonic()
+            if now - PLAYBACK.get("last_save", 0) > 30:
+                pos = current_position()
+                if pos > 10:
+                    _save_resume_position(PLAYBACK["path"], pos)
+                PLAYBACK["last_save"] = now
+    except Exception:
+        pass
     return {
         "playing": PLAYBACK["playing"],
         "paused": PLAYBACK["paused"],
@@ -1480,19 +1668,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
             cat = category or "movie"
             # enrich + store metadata (TMDB etc.) in parallel
             from concurrent.futures import ThreadPoolExecutor, as_completed
+            errors = []
             def _enrich(e):
                 try:
                     enrich_entry(e, cat, force=force)
                 except Exception as ex:
                     e.setdefault("genres", [])
                     e.setdefault("cast", [])
+                    errors.append(f"{os.path.basename(e.get('path') or '?')}: {ex}")
                 return e
-            with ThreadPoolExecutor(max_workers=3) as ex:
+            with ThreadPoolExecutor(max_workers=5) as ex:
                 futures = [ex.submit(_enrich, e) for e in uniq]
                 for f in as_completed(futures):
                     pass
             clean_missing_movies()
-            self._json({"movies": uniq, "count": len(uniq)})
+            save_tmdb_cache(force=True)
+            self._json({"movies": uniq, "count": len(uniq), "errors": errors[:20]})
             return
         if path == "/api/probe":
             p = qs.get("path", [None])[0]
@@ -1671,6 +1862,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     m["cast"] = json.loads(m.get("cast") or "[]")
                 except Exception:
                     m["cast"] = []
+                try:
+                    m["cast_full"] = json.loads(m.get("cast_json") or "[]")
+                except Exception:
+                    m["cast_full"] = []
+                try:
+                    m["similar"] = json.loads(m.get("similar_json") or "[]")
+                except Exception:
+                    m["similar"] = []
             self._json({"movie": m})
             return
         if path == "/api/streaming/sites":
@@ -1815,6 +2014,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     m["cast"] = json.loads(m.get("cast") or "[]")
                 except Exception:
                     m["cast"] = []
+                try:
+                    m["cast_full"] = json.loads(m.get("cast_json") or "[]")
+                except Exception:
+                    m["cast_full"] = []
+                try:
+                    m["similar"] = json.loads(m.get("similar_json") or "[]")
+                except Exception:
+                    m["similar"] = []
             self._json({"movie": m})
             return
         if path == "/api/collection/art":

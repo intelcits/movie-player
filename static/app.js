@@ -237,6 +237,7 @@ async function openDetail(m) {
   currentMovie = m;
   showView("detail");
   $("dTitle").textContent = m.title || m.name;
+  $("dTagline").textContent = "";
   $("dYear").textContent = m.year || "";
   $("dPath").textContent = m.path;
   $("dPoster").src = imgUrl(m, "poster");
@@ -249,6 +250,8 @@ async function openDetail(m) {
   $("dDirector").textContent = "";
   $("dCast").textContent = "";
   $("dFileInfo").textContent = "";
+  $("dResume").textContent = "";
+  $("startOverBtn").classList.add("hidden");
   const backdrop = imgUrl(m, "backdrop");
   $("dBackdrop").style.backgroundImage = backdrop ? `url(${backdrop})` : "";
   try {
@@ -256,11 +259,15 @@ async function openDetail(m) {
     const dm = data.movie;
     if (dm) {
       if (dm.poster_local || dm.poster_url) $("dPoster").src = imgUrl(dm, "poster");
+      if (dm.title) $("dTitle").textContent = dm.title;
       if (dm.backdrop_local || dm.backdrop_url) {
         const b = imgUrl(dm, "backdrop");
         if (b) $("dBackdrop").style.backgroundImage = `url(${b})`;
       }
       $("dOverview").textContent = dm.overview || "";
+      $("dTagline").textContent = dm.tagline || "";
+      const hasResume = !!(dm.resume_position && dm.resume_position > 10);
+      $("startOverBtn").classList.toggle("hidden", !hasResume);
       $("dRating").textContent = dm.rating ? `★ ${Number(dm.rating).toFixed(1)}` : "";
       $("dYear").textContent = dm.year || m.year || "";
       $("dRuntime").textContent = dm.runtime ? `${dm.runtime} min` : (m._duration ? fmtTime(m._duration) : "");
@@ -269,6 +276,39 @@ async function openDetail(m) {
       $("dDirector").innerHTML = dm.director ? `<strong>Director:</strong> ${escapeHtml(dm.director)}` : "";
       $("dCast").innerHTML = (dm.cast && dm.cast.length) ? `<strong>Cast:</strong> ${escapeHtml(dm.cast.join(", "))}` : "";
       $("dFileInfo").innerHTML = dm.file_info ? `<strong>File:</strong> ${escapeHtml(dm.file_info)}` : "";
+      if (dm.resume_position && dm.resume_position > 0) {
+        $("dResume").innerHTML = `<strong>Resume:</strong> ${fmtTime(dm.resume_position)} (auto-resumes on Play)`;
+      }
+      // trailer
+      const tr = $("dTrailer");
+      tr.innerHTML = "";
+      if (dm.trailer_key) {
+        const iframe = document.createElement("iframe");
+        iframe.src = `https://www.youtube.com/embed/${dm.trailer_key}`;
+        iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
+        iframe.allowFullscreen = true;
+        tr.appendChild(iframe);
+      }
+      // cast photos
+      const cp = $("dCastPhotos");
+      cp.innerHTML = "";
+      (dm.cast_full || []).forEach((c) => {
+        if (!c.profile) return;
+        const d = document.createElement("div");
+        d.className = "cp";
+        d.innerHTML = `<img src="${c.profile}" alt="" /><div>${escapeHtml(c.name)}</div>`;
+        cp.appendChild(d);
+      });
+      // similar
+      const sim = $("dSimilar");
+      sim.innerHTML = "";
+      (dm.similar || []).forEach((s) => {
+        if (!s.poster) return;
+        const card = document.createElement("div");
+        card.className = "sc";
+        card.innerHTML = `<img src="${s.poster}" alt="" /><div class="t">${escapeHtml(s.title)}</div>`;
+        sim.appendChild(card);
+      });
       m._duration = dm.duration || m._duration;
     }
   } catch (e) {}
@@ -484,6 +524,15 @@ $("playBtn").onclick = async () => {
   currentSub = sub;
   subsOn = !!sub;
   await api("/api/play", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, sub: subsOn ? sub : null }) });
+  showPlayerBar(currentMovie);
+  startPolling();
+};
+$("startOverBtn").onclick = async () => {
+  if (!currentMovie) return;
+  const sub = $("subSelect").value || null;
+  currentSub = sub;
+  subsOn = !!sub;
+  await api("/api/play", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, sub: subsOn ? sub : null, ss: 0 }) });
   showPlayerBar(currentMovie);
   startPolling();
 };
