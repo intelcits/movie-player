@@ -27,7 +27,9 @@ Then open http://127.0.0.1:8765
 ## Features
 - Scan library folders for movies (mkv, mp4, avi, mov, webm, ...)
 - SQLite metadata database (`movieplayer.db`) with per-movie details: title, year, overview, genres, runtime, director, cast, country, rating, duration, codec.
-- TMDB posters, backdrops, overviews, ratings, genres, cast, director, country (paste your TMDB v3 API key in Settings).
+- TMDB posters, backdrops, overviews, taglines, ratings, genres, cast, director, country (paste your TMDB v3 API key in Settings).
+- Rich detail view: tagline, YouTube trailer embed, cast photos, and a "similar movies" strip from TMDB.
+- Resume playback: position is remembered (saved every 30s, on pause, stop and window close) and restored automatically; "Start over" restarts from the beginning. Finished movies reset to 0.
 - Cached metadata images (`.cache/images/`) so they are not re-downloaded.
 - On scan, deleted files are removed from the DB and changed files are re-enriched.
 - When TMDB has no poster, a frame from the movie (ffmpeg thumbnail) is used as fallback art.
@@ -43,13 +45,13 @@ Then open http://127.0.0.1:8765
 - "Choose Media Art" button: search TMDB by title, fetch by TMDB URL/ID, search Google Images, or paste any image URL.
 - Sort movies by title, year, or recently added.
 - Streaming: Favorites/Wishlist (add/remove), click to search. TMDB Watchlist shown if session ID configured.
-- Streaming: removed DuckDuckGo option; embedded player opens in new tab.
+- Streaming: embedded player opens in a new tab.
 - Grid view or split view (list + detail side by side), with left/right panel choice.
 - Tabs: Movies, Series, Streaming (Musicals merged into Movies).
 - Server controls (Stop/Restart/Close) in a combo box in the top bar.
 - Interactive run.bat/run.sh menu to start/stop/restart the service.
-- Browser launch in kiosk (fullscreen) or maximized app mode with minimize/close controls.
-- Streaming tab: search movies/TV shows (TMDB), watch via an embedded player (opens in a new tab), and search across streaming sites on DuckDuckGo.
+- Browser launch in fullscreen (windowed fullscreen, controls stay usable) or maximized app mode.
+- Streaming tab: search movies/TV shows (TMDB), watch via an embedded player (opens in a new tab).
 
 ## Settings
 - Library folders: browse the filesystem and add folders (e.g. `D:\Torrent_Downloads`), or paste a path.
@@ -58,6 +60,6 @@ Then open http://127.0.0.1:8765
 
 ## Notes
 - Playback runs in an FFplay window; the HTML panel controls it (seeking re-launches ffplay at the new position). The window is focused automatically.
-- Add library folders in Settings, then Scan. First scan fetches TMDB metadata in parallel and may take a few minutes; later scans are fast (only changed files).
+- Add library folders in Settings, then Scan. First scan fetches TMDB metadata in parallel (5 workers, WAL-enabled SQLite) and may take a few minutes; later scans are fast (only changed files).
 - "Rescan all metadata & art" button in Settings forces a full re-fetch (TMDB + thumbnails) for all categories.
 - Streaming search uses an embedded player (vidsrc) by TMDB id and links to the FMHY site list.
