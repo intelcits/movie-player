@@ -10,11 +10,12 @@ It does NOT start the web server, so it can be run on demand or scheduled.
 The script must live in the same folder as movie_player.py.
 
 Examples:
-    python scan_movies.py                    # movies, incremental
+    python scan_movies.py                    # movies and series, incremental
     python scan_movies.py --force            # re-fetch metadata and art
-    python scan_movies.py --category all     # movies and series
+    python scan_movies.py --category movie   # movies only
+    python scan_movies.py --category series  # series only
     python scan_movies.py --dry-run          # list files, change nothing
-    python scan_movies.py --dir "D:\\Movies\\New"
+    python scan_movies.py --dir "D:\\Movies\\New" --category movie
 
 Exit codes:
     0 = completed without errors
@@ -250,12 +251,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="Scan MoviePlayer folders without starting the web server.",
     )
-    parser.add_argument("--category", choices=["movie", "series", "all"], default="movie",
-                        help="What to scan (default: movie).")
+    parser.add_argument("--category", choices=["movie", "series", "all"], default="all",
+                        help="What to scan (default: all = movies and series).")
     parser.add_argument("--force", action="store_true",
                         help="Re-fetch TMDB metadata and art even when the file is unchanged.")
     parser.add_argument("--dir", metavar="PATH",
-                        help="Scan only this directory instead of the configured folders.")
+                        help="Scan only this directory (also pass --category movie or series).")
     parser.add_argument("--dry-run", action="store_true",
                         help="List what would be scanned; do not write to the database.")
     parser.add_argument("--log-file", metavar="PATH",
