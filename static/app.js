@@ -317,7 +317,7 @@ async function openDetail(m) {
   $("dCast").textContent = "";
   $("dFileInfo").textContent = "";
   $("dResume").textContent = "";
-  $("startOverBtn").classList.add("hidden");
+  // startOver button removed
   const backdrop = imgUrl(m, "backdrop");
   $("dBackdrop").style.backgroundImage = backdrop ? `url(${backdrop})` : "";
   try {
@@ -336,7 +336,7 @@ async function openDetail(m) {
       $("dOverview").textContent = dm.overview || "";
       $("dTagline").textContent = dm.tagline || "";
       const hasResume = !!(dm.resume_position && dm.resume_position > 10);
-      $("startOverBtn").classList.toggle("hidden", !hasResume);
+      // startOver removed
       $("dRating").textContent = dm.rating ? `★ ${Number(dm.rating).toFixed(1)}` : "";
       $("dYear").textContent = dm.year || m.year || "";
       $("dRuntime").textContent = dm.runtime ? `${dm.runtime} min` : (m._duration ? fmtTime(m._duration) : "");
@@ -375,7 +375,12 @@ async function openDetail(m) {
         if (!s.poster) return;
         const card = document.createElement("div");
         card.className = "sc";
+        card.style.cursor = "pointer";
         card.innerHTML = `<img src="${s.poster}" alt="" /><div class="t">${escapeHtml(s.title)}</div>`;
+        card.onclick = () => {
+          const base = currentCategory === "series" ? "https://www.themoviedb.org/tv/" : "https://www.themoviedb.org/movie/";
+          if (s.id) window.open(base + s.id, "_blank");
+        };
         sim.appendChild(card);
       });
       m._duration = dm.duration || m._duration;
@@ -409,12 +414,23 @@ $("collBackBtn").onclick = () => showView("library");
 
 // art picker
 $("changeArtBtn").onclick = async () => {
+  if (!currentMovie) return;
   window._artTarget = "movie";
   $("artModal").classList.remove("hidden");
-  $("artQuery").value = currentMovie ? (currentMovie.title || currentMovie.name || "") : "";
+  $("editNameInput").value = currentMovie.custom_title || currentMovie.title || currentMovie.name || "";
+  $("artQuery").value = currentMovie.title || currentMovie.name || "";
   await doArtSearch();
 };
 $("artClose").onclick = () => $("artModal").classList.add("hidden");
+$("saveNameBtn").onclick = async () => {
+  if (!currentMovie) return;
+  const name = ($("editNameInput").value || "").trim();
+  if (!name) return;
+  await api("/api/movie/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, title: name }) });
+  currentMovie.custom_title = name; currentMovie.title = name;
+  $("dTitle").textContent = name;
+  await loadMovies();
+};
 $("artFrameBtn").onclick = async () => {
   if (window._artTarget === "collection") {
     await api("/api/collection/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentCollection }) });
@@ -488,9 +504,14 @@ $("artFetchBtn").onclick = async () => {
       await loadMovies();
       openCollection($("collTitle").textContent, currentCollectionItems);
     } else {
+      try {
+        const ad = await api("/api/movie/apply_tmdb", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, tmdb_id: id, category: currentCategory }) });
+        if (ad.movie) currentMovie = ad.movie;
+      } catch (e) {}
       await api("/api/movie/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, poster_url: posterUrl, backdrop_url: backdrop }) });
       currentMovie.poster_url = posterUrl || currentMovie.poster_url;
       currentMovie.backdrop_url = backdrop || currentMovie.backdrop_url;
+      $("editNameInput").value = currentMovie.custom_title || currentMovie.title || currentMovie.name || "";
       $("artModal").classList.add("hidden");
       openDetail(currentMovie);
     }
@@ -527,6 +548,11 @@ async function doArtSearch() {
         const dd = await api(`/api/tmdb/details?id=${r.id}`);
         if (dd.details && dd.details.backdrop_url) backdrop = dd.details.backdrop_url;
       } catch (e) {}
+      // apply TMDB metadata to the movie
+      try {
+        const ad = await api("/api/movie/apply_tmdb", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, tmdb_id: r.id, category: currentCategory }) });
+        if (ad.movie) { currentMovie = ad.movie; }
+      } catch (e) {}
       const posterUrl = r.poster ? r.poster.replace("w342","w500") : null;
       if (window._artTarget === "collection") {
         await api("/api/collection/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentCollection, poster_url: posterUrl, backdrop_url: backdrop }) });
@@ -538,6 +564,7 @@ async function doArtSearch() {
         await api("/api/movie/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, poster_url: posterUrl, backdrop_url: backdrop }) });
         currentMovie.poster_url = posterUrl || currentMovie.poster_url;
         currentMovie.backdrop_url = backdrop || currentMovie.backdrop_url;
+        $("editNameInput").value = currentMovie.custom_title || currentMovie.title || currentMovie.name || "";
         $("artModal").classList.add("hidden");
         openDetail(currentMovie);
       }
@@ -672,15 +699,6 @@ $("playBtn").onclick = async () => {
   currentSub = sub;
   subsOn = !!sub;
   await api("/api/play", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, sub: subsOn ? sub : null }) });
-  showPlayerBar(currentMovie);
-  startPolling();
-};
-$("startOverBtn").onclick = async () => {
-  if (!currentMovie) return;
-  const sub = $("subSelect").value || null;
-  currentSub = sub;
-  subsOn = !!sub;
-  await api("/api/play", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, sub: subsOn ? sub : null, ss: 0 }) });
   showPlayerBar(currentMovie);
   startPolling();
 };

@@ -2523,6 +2523,66 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 conn.close()
             self._json({"ok": True, "name": new_name})
             return
+        if path == "/api/movie/apply_tmdb":
+            p = norm_path(data.get("path"))
+            tmdb_id = data.get("tmdb_id")
+            if not p or not tmdb_id:
+                self._json({"error": "missing"}, 400)
+                return
+            existing = get_db_movie(p) or {}
+            cat = (data.get("category") or existing.get("category") or "movie").lower()
+            if cat == "series":
+                details = tmdb_details_tv(tmdb_id)
+            else:
+                details = tmdb_details(tmdb_id)
+            if not details or details.get("error"):
+                self._json({"error": "tmdb not found"}, 404)
+                return
+            poster_local = cache_image(details.get("poster_url"))
+            backdrop_local = cache_image(details.get("backdrop_url"))
+            if not backdrop_local and poster_local:
+                backdrop_local = poster_local
+            conn = db_conn()
+            try:
+                conn.execute("""UPDATE movies SET tmdb_id=?, title=?, year=?, overview=?, genres=?, runtime=?,
+                    director=?, "cast"=?, country=?, rating=?, poster_url=?, backdrop_url=?, poster_local=?,
+                    backdrop_local=?, tagline=?, trailer_key=?, cast_json=?, similar_json=?,
+                    collection_name=?, collection_id=?, scanned_at=?, tv_seasons_json=? WHERE path=?""",
+                    (details.get("tmdb_id"), details.get("title"), details.get("year"), details.get("overview"),
+                     json.dumps(details.get("genres") or []), details.get("runtime"), details.get("director"),
+                     json.dumps(details.get("cast") or []), details.get("country"), details.get("rating"),
+                     details.get("poster_url"), details.get("backdrop_url"), poster_local, backdrop_local,
+                     details.get("tagline"), details.get("trailer_key"), json.dumps(details.get("cast_full") or []),
+                     json.dumps(details.get("similar") or []), details.get("collection_name"), details.get("collection_id"),
+                     time.time(), json.dumps(details.get("tv_seasons") or []), p))
+                conn.commit()
+            finally:
+                conn.close()
+            m = get_db_movie(p)
+            if m:
+                try:
+                    m["genres"] = json.loads(m.get("genres") or "[]")
+                except Exception:
+                    m["genres"] = []
+                try:
+                    m["cast"] = json.loads(m.get("cast") or "[]")
+                except Exception:
+                    m["cast"] = []
+                try:
+                    m["cast_full"] = json.loads(m.get("cast_json") or "[]")
+                except Exception:
+                    m["cast_full"] = []
+                try:
+                    m["similar"] = json.loads(m.get("similar_json") or "[]")
+                except Exception:
+                    m["similar"] = []
+                try:
+                    m["tv_seasons"] = json.loads(m.get("tv_seasons_json") or "[]")
+                except Exception:
+                    m["tv_seasons"] = []
+                m["display_title"] = m.get("custom_title") or m.get("title")
+            self._json({"movie": m})
+            return
         if path == "/api/play":
             res = do_play(data.get("path"), data.get("sub"), data.get("ss"), data.get("volume"))
             self._json(res)

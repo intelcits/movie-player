@@ -114,15 +114,14 @@
         <p id="dDirector" class="detail-line"></p>
         <p id="dCast" class="detail-line"></p>
         <p id="dOverview" class="overview"></p>
-        <div id="dTrailer" class="detail-trailer"></div>
         <div id="dCastPhotos" class="cast-photos"></div>
+        <div id="dTrailer" class="detail-trailer"></div>
         <div id="dSimilar" class="similar-list"></div>
         <div class="detail-actions">
           <button id="playBtn" class="btn primary big">▶ Play</button>
-          <button id="startOverBtn" class="btn hidden">⟲ Start over</button>
           <button id="browserPlayBtn" class="btn">Browser play</button>
-          <button id="changeArtBtn" class="btn">Change art</button>
-          <button id="renameBtn" class="btn">✎ Rename</button>
+          <button id="changeArtBtn" class="btn">✎ Edit</button>
+          <button id="renameBtn" class="btn">Rename</button>
           <select id="subSelect"></select>
         </div>
         <div class="detail-path" id="dPath"></div>
@@ -244,7 +243,11 @@
 <!-- Art picker modal -->
 <div id="artModal" class="modal hidden">
   <div class="modal-card">
-    <h2>Choose Media Art</h2>
+    <h2>✎ Edit Media</h2>
+    <div class="fb-path">
+      <input id="editNameInput" type="text" placeholder="Name (rename)" />
+      <button id="saveNameBtn" class="btn">Save name</button>
+    </div>
     <div class="fb-path">
       <input id="artQuery" type="text" placeholder="Search TMDB by title..." />
       <button id="artSearchBtn" class="btn">Search TMDB</button>
