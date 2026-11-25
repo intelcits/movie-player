@@ -430,6 +430,7 @@ $("saveNameBtn").onclick = async () => {
   currentMovie.custom_title = name; currentMovie.title = name;
   $("dTitle").textContent = name;
   await loadMovies();
+  $("artModal").classList.add("hidden");
 };
 $("artFrameBtn").onclick = async () => {
   if (window._artTarget === "collection") {
@@ -529,8 +530,10 @@ $("artFetchBtn").onclick = async () => {
 };
 
 async function doArtSearch() {
-  const q = ($("artQuery").value || "").trim();
+  let q = ($("artQuery").value || "").trim();
+  if (!q) q = ($("editNameInput").value || "").trim();
   if (!q) return;
+  $("artQuery").value = q;
   const data = await api(`/api/tmdb/results?title=${encodeURIComponent(q)}&year=${encodeURIComponent(currentMovie?.year || "")}`);
   const container = $("artResults");
   container.innerHTML = "";
