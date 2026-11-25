@@ -412,49 +412,140 @@ async function openDetail(m) {
 $("backBtn").onclick = () => showView("library");
 $("collBackBtn").onclick = () => showView("library");
 
-// art picker
-$("changeArtBtn").onclick = async () => {
-  if (!currentMovie) return;
-  window._artTarget = "movie";
-  $("artModal").classList.remove("hidden");
+// ---- Edit media modal ----
+let editTarget = "movie";
+
+function setEditStatus(msg, isError) {
+  const el = $("editStatus");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.classList.toggle("error", !!isError);
+}
+
+function parseSearchQuery(raw) {
+  let q = (raw || "").trim();
+  let year = "";
+  if (!q) return { title: "", year: "" };
+  let m = q.match(/^(.*?)\s*[\(\[]\s*(\d{4})\s*[\)\]]\s*$/);
+  if (m) {
+    q = m[1].trim();
+    year = m[2];
+  } else {
+    m = q.match(/^(.*?)[\s,–-]+(\d{4})\s*$/);
+    if (m) {
+      q = m[1].trim();
+      year = m[2];
+    }
+  }
+  return { title: q, year };
+}
+
+function parseTmdbRef(input) {
+  const raw = (input || "").trim();
+  if (!raw) return { id: null, language: null };
+  let language = null;
+  const lm = raw.match(/[?&]language=([A-Za-z-]+)/);
+  if (lm) language = lm[1];
+  const m = raw.match(/(\d+)/);
+  return { id: m ? parseInt(m[1], 10) : null, language };
+}
+
+function refreshOpenDetail() {
+  if (currentMovie && !$("detailView").classList.contains("hidden")) {
+    return openDetail(currentMovie);
+  }
+  if (currentMovie && !$("splitView").classList.contains("hidden")) {
+    renderSplitDetail(currentMovie, $("splitDetail"));
+  }
+  return Promise.resolve();
+}
+
+async function applyTmdbToMovie(id, language) {
+  if (!currentMovie || !currentMovie.path) throw new Error("no movie selected");
+  setEditStatus("Applying TMDB metadata…");
+  const body = { path: currentMovie.path, tmdb_id: id, category: currentCategory };
+  if (language) body.language = language;
+  const ad = await api("/api/movie/apply_tmdb", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  if (!ad || ad.error) throw new Error((ad && ad.error) || "TMDB lookup failed");
+  if (ad.movie) currentMovie = ad.movie;
   $("editNameInput").value = currentMovie.custom_title || currentMovie.title || currentMovie.name || "";
-  $("artQuery").value = currentMovie.title || currentMovie.name || "";
-  await doArtSearch();
-};
+  setEditStatus(`Applied: ${currentMovie.title || currentMovie.name || ""}${currentMovie.year ? " (" + currentMovie.year + ")" : ""} — art and metadata updated.`);
+  await loadMovies();
+  await refreshOpenDetail();
+  return currentMovie;
+}
+
+async function applyTmdbToCollection(id, language) {
+  const qs = `?id=${encodeURIComponent(id)}${language ? "&language=" + encodeURIComponent(language) : ""}`;
+  const data = await api(`/api/tmdb/details${qs}`);
+  const d = data.details;
+  if (!d) throw new Error("TMDB lookup failed");
+  await api("/api/collection/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentCollection, poster_url: d.poster_url, backdrop_url: d.backdrop_url }) });
+  setEditStatus(`Applied art for ${d.title || ""}${d.year ? " (" + d.year + ")" : ""}.`);
+  await loadMovies();
+  if (!$("seriesView").classList.contains("hidden") && currentSeries) {
+    openSeries(currentSeries);
+  } else if (!$("collectionView").classList.contains("hidden") && currentCollectionItems) {
+    openCollection($("collTitle").textContent, currentCollectionItems);
+  }
+  return d;
+}
+
+async function openEditModal(target) {
+  editTarget = target === "collection" ? "collection" : "movie";
+  const isMovie = editTarget === "movie";
+  $("artModal").classList.remove("hidden");
+  $("artResults").innerHTML = "";
+  $("artPreview").innerHTML = "";
+  $("artTmdbInput").value = "";
+  $("editNameRow").classList.toggle("hidden", !isMovie);
+  $("artFrameBtn").classList.toggle("hidden", !isMovie);
+  setEditStatus("");
+  if (isMovie && currentMovie) {
+    $("editNameInput").value = currentMovie.custom_title || currentMovie.title || currentMovie.name || "";
+    $("artQuery").value = currentMovie.title || currentMovie.name || "";
+  } else {
+    $("editNameInput").value = "";
+    $("artQuery").value = currentSeries ? (currentSeries.name || "") : ((currentCollection || "").split(/[\\/]/).pop() || "");
+  }
+  if ($("artQuery").value) await doArtSearch();
+}
+
+$("changeArtBtn").onclick = () => openEditModal("movie");
 $("artClose").onclick = () => $("artModal").classList.add("hidden");
+$("artSaveCloseBtn").onclick = async () => {
+  $("artModal").classList.add("hidden");
+  await loadMovies();
+  await refreshOpenDetail();
+};
 $("saveNameBtn").onclick = async () => {
   if (!currentMovie) return;
   const name = ($("editNameInput").value || "").trim();
   if (!name) return;
-  await api("/api/movie/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, title: name }) });
-  currentMovie.custom_title = name; currentMovie.title = name;
-  $("dTitle").textContent = name;
-  await loadMovies();
-  $("artModal").classList.add("hidden");
+  try {
+    await api("/api/movie/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, title: name }) });
+    currentMovie.custom_title = name;
+    currentMovie.title = name;
+    setEditStatus("Name saved. TMDB art and metadata unchanged.");
+    await loadMovies();
+    await refreshOpenDetail();
+  } catch (e) {
+    setEditStatus("Rename failed: " + e.message, true);
+  }
 };
 $("artFrameBtn").onclick = async () => {
-  if (window._artTarget === "collection") {
-    await api("/api/collection/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentCollection }) });
-    window._artTarget = null;
-    $("artModal").classList.add("hidden");
-    await loadMovies();
-    openCollection($("collTitle").textContent, currentCollectionItems);
-  } else {
+  if (!currentMovie) return;
+  try {
     await api("/api/movie/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path }) });
-    $("artModal").classList.add("hidden");
-    openDetail(currentMovie);
+    setEditStatus("Applied a frame from the movie.");
+    await loadMovies();
+    await refreshOpenDetail();
+  } catch (e) {
+    setEditStatus("Could not use a frame: " + e.message, true);
   }
 };
 $("artSearchBtn").onclick = doArtSearch;
 $("artQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") doArtSearch(); });
-
-function parseTmdbId(input) {
-  input = (input || "").trim();
-  if (!input) return null;
-  // extract digits from URL or plain ID
-  const m = input.match(/(\d+)/);
-  return m ? parseInt(m[1]) : null;
-}
 
 $("artGoogleBtn").onclick = () => {
   const q = ($("artGoogleQuery").value || "").trim() || (currentMovie ? (currentMovie.title || currentMovie.name || "") : "");
@@ -465,79 +556,64 @@ $("artGoogleBtn").onclick = () => {
 $("artUrlBtn").onclick = async () => {
   const url = ($("artUrlInput").value || "").trim();
   if (!url) return;
-  if (window._artTarget === "collection") {
-    await api("/api/collection/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentCollection, poster_url: url, backdrop_url: url }) });
-    window._artTarget = null;
-    $("artModal").classList.add("hidden");
-    await loadMovies();
-    openCollection($("collTitle").textContent, currentCollectionItems);
-  } else {
-    await api("/api/movie/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, poster_url: url, backdrop_url: url }) });
-    currentMovie.poster_url = url;
-    currentMovie.backdrop_url = url;
-    $("artModal").classList.add("hidden");
-    openDetail(currentMovie);
+  try {
+    if (editTarget === "collection") {
+      await api("/api/collection/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentCollection, poster_url: url, backdrop_url: url }) });
+      setEditStatus("Applied the image URL.");
+      await loadMovies();
+    } else {
+      await api("/api/movie/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, poster_url: url, backdrop_url: url }) });
+      currentMovie.poster_url = url;
+      currentMovie.backdrop_url = url;
+      setEditStatus("Applied the image URL.");
+      await loadMovies();
+      await refreshOpenDetail();
+    }
+  } catch (e) {
+    setEditStatus("Could not apply the image URL: " + e.message, true);
   }
 };
 
 $("artFetchBtn").onclick = async () => {
-  const id = parseTmdbId($("artTmdbInput").value);
-  if (!id) return;
-  const data = await api(`/api/tmdb/details?id=${id}`);
-  const d = data.details;
-  if (!d) return;
-  const preview = $("artPreview");
-  preview.innerHTML = "";
-  const card = document.createElement("div");
-  card.className = "stream-card";
-  card.innerHTML = `
-    ${d.poster_url ? `<img src="${d.poster_url}" alt="" />` : ""}
-    <div class="t">${escapeHtml(d.title)}</div>
-    <div class="y">${d.year || ""}</div>`;
-  card.style.cursor = "pointer";
-  card.onclick = async () => {
-    const backdrop = d.backdrop_url;
-    const posterUrl = d.poster_url;
-    if (window._artTarget === "collection") {
-      await api("/api/collection/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentCollection, poster_url: posterUrl, backdrop_url: backdrop }) });
-      window._artTarget = null;
-      $("artModal").classList.add("hidden");
-      await loadMovies();
-      openCollection($("collTitle").textContent, currentCollectionItems);
-    } else {
-      try {
-        const ad = await api("/api/movie/apply_tmdb", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, tmdb_id: id, category: currentCategory }) });
-        if (ad.movie) currentMovie = ad.movie;
-      } catch (e) {}
-      await api("/api/movie/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, poster_url: posterUrl, backdrop_url: backdrop }) });
-      currentMovie.poster_url = posterUrl || currentMovie.poster_url;
-      currentMovie.backdrop_url = backdrop || currentMovie.backdrop_url;
-      $("editNameInput").value = currentMovie.custom_title || currentMovie.title || currentMovie.name || "";
-      $("artModal").classList.add("hidden");
-      openDetail(currentMovie);
-    }
-  };
-  preview.appendChild(card);
-  // also show backdrop preview
-  if (d.backdrop_url) {
-    const b = document.createElement("img");
-    b.src = d.backdrop_url;
-    b.style.width = "100%";
-    b.style.borderRadius = "8px";
-    b.style.marginTop = "8px";
-    preview.appendChild(b);
+  const ref = parseTmdbRef($("artTmdbInput").value);
+  if (!ref.id) {
+    setEditStatus("Paste a TMDB URL or numeric ID first.", true);
+    return;
+  }
+  try {
+    if (editTarget === "collection") await applyTmdbToCollection(ref.id, ref.language);
+    else await applyTmdbToMovie(ref.id, ref.language);
+  } catch (e) {
+    setEditStatus("TMDB lookup failed: " + e.message, true);
   }
 };
 
 async function doArtSearch() {
-  let q = ($("artQuery").value || "").trim();
-  if (!q) q = ($("editNameInput").value || "").trim();
-  if (!q) return;
-  $("artQuery").value = q;
-  const data = await api(`/api/tmdb/results?title=${encodeURIComponent(q)}&year=${encodeURIComponent(currentMovie?.year || "")}`);
+  const raw = ($("artQuery").value || "").trim() || ($("editNameInput").value || "").trim();
+  if (!raw) {
+    setEditStatus("Type a title to search TMDB.", true);
+    return;
+  }
+  const parsed = parseSearchQuery(raw);
+  const year = parsed.year || (editTarget === "movie" && currentMovie ? (currentMovie.year || "") : "");
+  $("artResults").innerHTML = "";
+  $("artPreview").innerHTML = "";
+  setEditStatus("Searching TMDB…");
+  let data;
+  try {
+    data = await api(`/api/tmdb/results?title=${encodeURIComponent(parsed.title)}&year=${encodeURIComponent(year)}`);
+  } catch (e) {
+    setEditStatus("TMDB search failed: " + e.message, true);
+    return;
+  }
+  const results = data.results || [];
+  if (!results.length) {
+    setEditStatus(`No TMDB results for “${parsed.title}”${year ? " (" + year + ")" : ""}. Try the TMDB URL or ID below.`, true);
+    return;
+  }
+  setEditStatus(`${results.length} result(s). Click one to apply its art and metadata.`);
   const container = $("artResults");
-  container.innerHTML = "";
-  (data.results || []).forEach((r) => {
+  results.forEach((r) => {
     const card = document.createElement("div");
     card.className = "stream-card";
     card.innerHTML = `
@@ -546,36 +622,16 @@ async function doArtSearch() {
       <div class="y">${r.year || ""}</div>`;
     card.style.cursor = "pointer";
     card.onclick = async () => {
-      let backdrop = r.backdrop;
       try {
-        const dd = await api(`/api/tmdb/details?id=${r.id}`);
-        if (dd.details && dd.details.backdrop_url) backdrop = dd.details.backdrop_url;
-      } catch (e) {}
-      // apply TMDB metadata to the movie
-      try {
-        const ad = await api("/api/movie/apply_tmdb", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, tmdb_id: r.id, category: currentCategory }) });
-        if (ad.movie) { currentMovie = ad.movie; }
-      } catch (e) {}
-      const posterUrl = r.poster ? r.poster.replace("w342","w500") : null;
-      if (window._artTarget === "collection") {
-        await api("/api/collection/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentCollection, poster_url: posterUrl, backdrop_url: backdrop }) });
-        window._artTarget = null;
-        $("artModal").classList.add("hidden");
-        await loadMovies();
-        openCollection($("collTitle").textContent, currentCollectionItems);
-      } else {
-        await api("/api/movie/art", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, poster_url: posterUrl, backdrop_url: backdrop }) });
-        currentMovie.poster_url = posterUrl || currentMovie.poster_url;
-        currentMovie.backdrop_url = backdrop || currentMovie.backdrop_url;
-        $("editNameInput").value = currentMovie.custom_title || currentMovie.title || currentMovie.name || "";
-        $("artModal").classList.add("hidden");
-        openDetail(currentMovie);
+        if (editTarget === "collection") await applyTmdbToCollection(r.id);
+        else await applyTmdbToMovie(r.id);
+      } catch (e) {
+        setEditStatus("Apply failed: " + e.message, true);
       }
     };
     container.appendChild(card);
   });
 }
-$("collBackBtn").onclick = () => showView("library");
 
 let currentCollection = null;
 let currentCollectionItems = null;
@@ -638,14 +694,11 @@ $("seriesBackBtn").onclick = () => {
   }
 };
 
-$("seriesChangeArtBtn").onclick = async () => {
+$("seriesChangeArtBtn").onclick = () => {
   if (!currentSeries) return;
-  window._artTarget = "collection";
   currentCollection = currentSeries.key;
   currentCollectionItems = (currentSeries.seasons || []).flatMap((s) => s.episodes || []);
-  $("artModal").classList.remove("hidden");
-  $("artQuery").value = currentSeries.name || "";
-  await doArtSearch();
+  openEditModal("collection");
 };
 
 $("seriesRenameBtn").onclick = async () => {
@@ -678,24 +731,7 @@ function openCollection(title, items) {
   });
 }
 
-$("collChangeArtBtn").onclick = async () => {
-  if (!currentCollection) return;
-  $("artModal").classList.remove("hidden");
-  $("artQuery").value = currentCollection.split(/[\\/]/).pop() || currentCollection;
-  // override the art picker to target the collection
-  window._artTarget = "collection";
-  await doArtSearch();
-};
-// patch doArtSearch result click to handle collection target
-const _origDoArtSearch = doArtSearch;
-doArtSearch = async function() {
-  await _origDoArtSearch();
-  // re-bind clicks with collection handling
-  document.querySelectorAll("#artResults .stream-card").forEach((card, idx) => {
-    // already bound; nothing extra
-  });
-};
-
+$("collChangeArtBtn").onclick = () => openEditModal("collection");
 $("playBtn").onclick = async () => {
   if (!currentMovie) return;
   const sub = $("subSelect").value || null;
@@ -987,8 +1023,7 @@ function renderSplitDetail(m, detail) {
       <div class="sd-actions">
         <button class="btn primary" id="sdPlay">▶ Play</button>
         <button class="btn" id="sdBrowser">Browser play</button>
-        <button class="btn" id="sdArt">Change art</button>
-        <button class="btn" id="sdRename">✎ Rename</button>
+        <button class="btn" id="sdArt">✎ Edit</button>
       </div>`;
     detail.innerHTML = "";
     detail.appendChild(div);
@@ -1002,19 +1037,8 @@ function renderSplitDetail(m, detail) {
       window.open(`/player.html?path=${encodeURIComponent(dm.path)}&sub=${encodeURIComponent((dm.subtitles&&dm.subtitles[0])?dm.subtitles[0].path:"")}`, "_blank");
     };
     div.querySelector("#sdArt").onclick = () => {
-      window._artTarget = "movie";
       currentMovie = dm;
-      $("artModal").classList.remove("hidden");
-      $("artQuery").value = dm.title || dm.name || "";
-      doArtSearch();
-    };
-    div.querySelector("#sdRename").onclick = async () => {
-      const name = prompt("New name:", dm.custom_title || dm.title || dm.name || "");
-      if (!name || !name.trim()) return;
-      await api("/api/movie/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: dm.path, title: name.trim() }) });
-      dm.custom_title = name.trim(); dm.title = name.trim();
-      div.querySelector(".sd-title").textContent = name.trim();
-      await loadMovies();
+      openEditModal("movie");
     };
   }).catch(() => {
     detail.innerHTML = "<p style='color:var(--muted)'>Failed to load details.</p>";
