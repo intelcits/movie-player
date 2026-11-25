@@ -5,6 +5,7 @@ __pycache__/
 
 # Runtime data
 .cache/
+logs/
 movieplayer.db
 movie_player.conf.json
 
