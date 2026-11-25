@@ -702,21 +702,6 @@ $("playBtn").onclick = async () => {
   showPlayerBar(currentMovie);
   startPolling();
 };
-$("renameBtn").onclick = async () => {
-  if (!currentMovie) return;
-  const name = prompt("New name:", currentMovie.custom_title || currentMovie.title || currentMovie.name || "");
-  if (!name || !name.trim()) return;
-  if (currentMovie.collection && currentTab === "series") {
-    await api("/api/series/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentMovie.collection, title: name.trim() }) });
-  } else {
-    await api("/api/movie/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, title: name.trim() }) });
-  }
-  currentMovie.custom_title = name.trim();
-  currentMovie.title = name.trim();
-  $("dTitle").textContent = name.trim();
-  await loadMovies();
-};
-
 $("browserPlayBtn").onclick = () => {
   if (!currentMovie) return;
   window.open(`/player.html?path=${encodeURIComponent(currentMovie.path)}&sub=${encodeURIComponent($("subSelect").value||"")}`, "_blank");
