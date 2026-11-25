@@ -29,7 +29,16 @@ Then open http://127.0.0.1:8765
 - SQLite metadata database (`movieplayer.db`) with per-movie details: title, year, overview, genres, runtime, director, cast, country, rating, duration, codec.
 - TMDB posters, backdrops, overviews, taglines, ratings, genres, cast, director, country (paste your TMDB v3 API key in Settings).
 - Rich detail view: tagline, YouTube trailer embed, cast photos, and a "similar movies" strip from TMDB.
-- Resume playback: position is remembered (saved every 30s, on pause, stop and window close) and restored automatically; "Start over" restarts from the beginning. Finished movies reset to 0.
+- Better title parsing (strips release tags, codecs, brackets, audio channels, leading numbering, and James Bond branding).
+- Editable names: rename any movie or series from the detail view (✎ Rename); series rename applies to the whole show.
+- Split view now mirrors the detail view (metadata, trailer link, change art, rename).
+- Series browse: Series → Season (with season cover) → Episode (with episode name and cover).
+- Movie sets filter: "Movie sets only" checkbox; collection view shows each movie as `Title (Year)`.
+- Country filter lists one country per line (coproductions still match).
+- Search box has an explicit clear (×) button.
+- Interface font size and font family settings.
+- Subtitle size and color settings (ffplay force_style + browser player ::cue).
+- Movies/Series counters in the top bar.
 - Cached metadata images (`.cache/images/`) so they are not re-downloaded.
 - On scan, deleted files are removed from the DB and changed files are re-enriched.
 - When TMDB has no poster, a frame from the movie (ffmpeg thumbnail) is used as fallback art.

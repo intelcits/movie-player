@@ -1,5 +1,6 @@
 const API = "";
 let movies = [];
+let seriesData = [];
 let currentMovie = null;
 let subsOn = true;
 let currentSub = null;
@@ -44,10 +45,12 @@ function showView(name) {
   $("detailView").classList.add("hidden");
   $("streamingView").classList.add("hidden");
   $("collectionView").classList.add("hidden");
+  $("seriesView").classList.add("hidden");
   if (name === "library") $("libraryView").classList.remove("hidden");
   else if (name === "detail") $("detailView").classList.remove("hidden");
   else if (name === "streaming") $("streamingView").classList.remove("hidden");
   else if (name === "collection") $("collectionView").classList.remove("hidden");
+  else if (name === "series") $("seriesView").classList.remove("hidden");
 }
 
 function switchTab(tab) {
@@ -70,6 +73,22 @@ function applyTheme(name) {
   if (link) link.href = `/static/theme-${name || "default"}.css`;
 }
 
+const FONT_MAP = {
+  system: '"Segoe UI", Roboto, Arial, sans-serif',
+  sans: 'Helvetica, Arial, sans-serif',
+  serif: 'Georgia, "Times New Roman", serif',
+  mono: '"Consolas", "Courier New", monospace',
+};
+
+function applyUiPrefs() {
+  const size = parseInt($("sFontSize")?.value) || 15;
+  const fam = $("sFontFamily")?.value || "system";
+  document.documentElement.style.setProperty("--fs-base", size + "px");
+  document.documentElement.style.setProperty("--font-ui", FONT_MAP[fam] || FONT_MAP.system);
+  // persist locally for player.html subtitle prefs
+  try { localStorage.setItem("mp_ui_font_size", String(size)); } catch (e) {}
+}
+
 async function loadConfig() {
   const cfg = await api("/api/config");
   $("sHost").value = cfg.host || "127.0.0.1";
@@ -81,6 +100,11 @@ async function loadConfig() {
   applyTheme(cfg.theme || "default");
   $("sKiosk").checked = !!cfg.kiosk_mode;
   $("sFullscreen").checked = cfg.fullscreen !== false;
+  $("sFontSize").value = cfg.ui_font_size || 15;
+  $("sFontFamily").value = cfg.ui_font_family || "system";
+  $("sSubSize").value = cfg.sub_size || 28;
+  $("sSubColor").value = cfg.sub_color || "#ffffff";
+  applyUiPrefs();
   refreshLibLists();
   populateLibSelect();
 }
@@ -110,6 +134,12 @@ async function populateLibSelect() {
   // no-op placeholder; library select removed from header
 }
 
+async function updateCounter() {
+  try {
+    const d = await api("/api/counts");
+    $("mediaCounter").textContent = `Movies: ${d.movies} · Series: ${d.series}`;
+  } catch (e) {}
+}
 async function loadFilterOptions() {
   try {
     const data = await api(`/api/filter_options?category=${currentCategory}`);
@@ -146,7 +176,22 @@ async function loadMovies() {
   const d = $("fDirector").value; if (d) params.set("director", d);
   const a = $("fActor").value; if (a) params.set("actor", a);
   const y = $("fYear").value; if (y) params.set("year", y);
+  if ($("fSetsOnly")?.checked) params.set("sets", "1");
   params.set("sort", $("sortSelect").value || "title_asc");
+  if (currentCategory === "series") {
+    const data = await api("/api/series?" + params.toString());
+    seriesData = data.series || [];
+    if (viewMode === "grid") {
+      $("grid").classList.remove("hidden");
+      $("splitView").classList.add("hidden");
+      renderSeriesGrid();
+    } else {
+      $("grid").classList.add("hidden");
+      $("splitView").classList.remove("hidden");
+      renderSplitView();
+    }
+    return;
+  }
   const data = await api("/api/movies?" + params.toString());
   movies = data.movies || [];
   if (viewMode === "grid") {
@@ -170,6 +215,7 @@ async function scan() {
     await api(url);
     await loadFilterOptions();
     await loadMovies();
+    updateCounter();
   } finally {
     btn.textContent = orig;
     btn.disabled = false;
@@ -231,13 +277,33 @@ function renderGrid() {
   });
 }
 
+function renderSeriesGrid() {
+  const grid = $("grid");
+  grid.innerHTML = "";
+  $("emptyState").classList.toggle("hidden", seriesData.length > 0);
+  seriesData.forEach((s) => {
+    const card = document.createElement("div");
+    card.className = "card";
+    let posterUrl = s.poster_local ? `/api/file?path=${encodeURIComponent(s.poster_local)}` : (s.poster_url || "");
+    const seasons = (s.seasons || []).length;
+    const eps = (s.seasons || []).reduce((a, x) => a + (x.episodes || []).length, 0);
+    card.innerHTML = `
+      <img class="poster" src="${posterUrl}" alt="" loading="lazy" onerror="this.style.background='#000'" />
+      <div class="card-title">${escapeHtml(s.name || s.key)}</div>
+      <div class="card-year">${s.year || ""} · ${seasons} season(s) · ${eps} ep</div>`;
+    card.onclick = () => openSeries(s);
+    grid.appendChild(card);
+  });
+}
+
 function escapeHtml(s){ return (s||"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 async function openDetail(m) {
   currentMovie = m;
   showView("detail");
-  $("dTitle").textContent = m.title || m.name;
+  $("dTitle").textContent = m.custom_title || m.title || m.name;
   $("dTagline").textContent = "";
+  $("dEpisode").textContent = "";
   $("dYear").textContent = m.year || "";
   $("dPath").textContent = m.path;
   $("dPoster").src = imgUrl(m, "poster");
@@ -259,7 +325,10 @@ async function openDetail(m) {
     const dm = data.movie;
     if (dm) {
       if (dm.poster_local || dm.poster_url) $("dPoster").src = imgUrl(dm, "poster");
-      if (dm.title) $("dTitle").textContent = dm.title;
+      if (dm.title) $("dTitle").textContent = dm.custom_title || dm.title;
+      if (dm.season || dm.episode) {
+        $("dEpisode").innerHTML = `<strong>Episode:</strong> S${String(dm.season||1).padStart(2,"0")}E${String(dm.episode||0).padStart(2,"0")}${dm.episode_title ? " · " + escapeHtml(dm.episode_title) : ""}`;
+      }
       if (dm.backdrop_local || dm.backdrop_url) {
         const b = imgUrl(dm, "backdrop");
         if (b) $("dBackdrop").style.backgroundImage = `url(${b})`;
@@ -480,6 +549,85 @@ $("collBackBtn").onclick = () => showView("library");
 
 let currentCollection = null;
 let currentCollectionItems = null;
+let currentSeries = null;
+let currentSeason = null;
+
+function openSeries(s) {
+  currentSeries = s;
+  currentSeason = null;
+  showView("series");
+  $("seriesTitle").textContent = s.name || s.key;
+  $("seriesSeasons").classList.remove("hidden");
+  $("seasonEpisodes").classList.add("hidden");
+  const seasonsGrid = $("seriesSeasons");
+  seasonsGrid.innerHTML = "";
+  (s.seasons || []).forEach((sn) => {
+    const card = document.createElement("div");
+    card.className = "card";
+    let posterUrl = sn.poster_local ? `/api/file?path=${encodeURIComponent(sn.poster_local)}` : (sn.poster || "");
+    if (!posterUrl) posterUrl = s.poster_local ? `/api/file?path=${encodeURIComponent(s.poster_local)}` : (s.poster_url || "");
+    card.innerHTML = `
+      <img class="poster" src="${posterUrl}" alt="" loading="lazy" onerror="this.style.background='#000'" />
+      <div class="card-title">Season ${sn.season}${sn.name ? " - " + escapeHtml(sn.name) : ""}</div>
+      <div class="card-year">${(sn.episodes || []).length} episodes</div>`;
+    card.onclick = () => openSeason(sn);
+    seasonsGrid.appendChild(card);
+  });
+  // change art target collection = series key
+  window._seriesArtCollection = s.key;
+}
+
+function openSeason(sn) {
+  currentSeason = sn;
+  $("seriesSeasons").classList.add("hidden");
+  const epGrid = $("seasonEpisodes");
+  epGrid.classList.remove("hidden");
+  epGrid.innerHTML = "";
+  (sn.episodes || []).forEach((m) => {
+    const card = document.createElement("div");
+    card.className = "card";
+    const posterUrl = imgUrl(m, "poster");
+    const epTitle = m.episode_title || m.title || m.name;
+    card.innerHTML = `
+      <img class="poster" src="${posterUrl}" alt="" loading="lazy" onerror="this.style.background='#000'" />
+      <div class="card-title">E${String(m.episode || "").padStart(2,"0")} ${escapeHtml(epTitle)}</div>
+      <div class="card-year">${m.year || ""}</div>`;
+    card.onclick = () => openDetail(m);
+    epGrid.appendChild(card);
+  });
+}
+
+$("seriesBackBtn").onclick = () => {
+  if (currentSeason) {
+    currentSeason = null;
+    $("seasonEpisodes").classList.add("hidden");
+    $("seriesSeasons").classList.remove("hidden");
+  } else {
+    showView("library");
+    loadMovies();
+  }
+};
+
+$("seriesChangeArtBtn").onclick = async () => {
+  if (!currentSeries) return;
+  window._artTarget = "collection";
+  currentCollection = currentSeries.key;
+  currentCollectionItems = (currentSeries.seasons || []).flatMap((s) => s.episodes || []);
+  $("artModal").classList.remove("hidden");
+  $("artQuery").value = currentSeries.name || "";
+  await doArtSearch();
+};
+
+$("seriesRenameBtn").onclick = async () => {
+  if (!currentSeries) return;
+  const name = prompt("New series name:", currentSeries.name || currentSeries.key);
+  if (!name || !name.trim()) return;
+  await api("/api/series/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentSeries.key, title: name.trim() }) });
+  currentSeries.name = name.trim();
+  $("seriesTitle").textContent = name.trim();
+  await loadMovies();
+};
+
 function openCollection(title, items) {
   currentCollection = items && items[0] ? (items[0].collection || title) : title;
   currentCollectionItems = items;
@@ -493,8 +641,8 @@ function openCollection(title, items) {
     const posterUrl = imgUrl(m, "poster");
     card.innerHTML = `
       <img class="poster" src="${posterUrl}" alt="" loading="lazy" onerror="this.style.background='#000'" />
-      <div class="card-title">${escapeHtml(m.title || m.name)}</div>
-      <div class="card-year">${m.file_info || m.year || ""}</div>`;
+      <div class="card-title">${escapeHtml(m.title || m.name)}${m.year ? " (" + escapeHtml(m.year) + ")" : ""}</div>
+      <div class="card-year">${m.file_info || ""}</div>`;
     card.onclick = () => openDetail(m);
     grid.appendChild(card);
   });
@@ -536,6 +684,21 @@ $("startOverBtn").onclick = async () => {
   showPlayerBar(currentMovie);
   startPolling();
 };
+$("renameBtn").onclick = async () => {
+  if (!currentMovie) return;
+  const name = prompt("New name:", currentMovie.custom_title || currentMovie.title || currentMovie.name || "");
+  if (!name || !name.trim()) return;
+  if (currentMovie.collection && currentTab === "series") {
+    await api("/api/series/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentMovie.collection, title: name.trim() }) });
+  } else {
+    await api("/api/movie/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, title: name.trim() }) });
+  }
+  currentMovie.custom_title = name.trim();
+  currentMovie.title = name.trim();
+  $("dTitle").textContent = name.trim();
+  await loadMovies();
+};
+
 $("browserPlayBtn").onclick = () => {
   if (!currentMovie) return;
   window.open(`/player.html?path=${encodeURIComponent(currentMovie.path)}&sub=${encodeURIComponent($("subSelect").value||"")}`, "_blank");
@@ -645,6 +808,7 @@ $("rescanBtn").onclick = async () => {
     }
     await loadFilterOptions();
     await loadMovies();
+    updateCounter();
   } finally {
     btn.textContent = orig;
     btn.disabled = false;
@@ -678,8 +842,14 @@ $("sSave").onclick = async () => {
     theme: $("sTheme").value,
     kiosk_mode: $("sKiosk").checked,
     fullscreen: $("sFullscreen").checked,
+    ui_font_size: parseInt($("sFontSize").value) || 15,
+    ui_font_family: $("sFontFamily").value,
+    sub_size: parseInt($("sSubSize").value) || 28,
+    sub_color: $("sSubColor").value || "#ffffff",
   };
   await api("/api/config", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(cfg) });
+  try { localStorage.setItem("mp_sub_size", String(cfg.sub_size)); localStorage.setItem("mp_sub_color", cfg.sub_color); } catch(e){}
+  applyUiPrefs();
   $("settingsModal").classList.add("hidden");
 };
 
@@ -757,7 +927,11 @@ function renderSplitView() {
   const detail = $("splitDetail");
   list.innerHTML = "";
   detail.innerHTML = "<p style='color:var(--muted)'>Select a movie from the list.</p>";
-  movies.forEach((m) => {
+  let items = movies;
+  if (currentCategory === "series" && seriesData.length) {
+    items = seriesData.flatMap((s) => (s.seasons || []).flatMap((sn) => (sn.episodes || [])));
+  }
+  items.forEach((m) => {
     const item = document.createElement("div");
     item.className = "split-item";
     item.textContent = (m.title || m.name) + (m.year ? " (" + m.year + ")" : "");
@@ -768,64 +942,91 @@ function renderSplitView() {
     };
     list.appendChild(item);
   });
-  if (movies.length) {
+  if (items.length) {
     const firstItem = list.querySelector(".split-item");
     if (firstItem) firstItem.click();
   }
 }
 
 function renderSplitDetail(m, detail) {
-  detail.innerHTML = "";
-  const poster = imgUrl(m, "poster");
-  const backdrop = imgUrl(m, "backdrop");
-  if (backdrop) {
-    detail.style.backgroundImage = `url(${backdrop})`;
-    detail.style.backgroundSize = "cover";
-    detail.style.backgroundPosition = "center";
-  }
-  const div = document.createElement("div");
-  div.style.background = "rgba(15,17,21,.75)";
-  div.style.padding = "16px";
-  div.style.borderRadius = "8px";
-  div.innerHTML = `
-    <img class="sd-poster" src="${poster}" alt="" />
-    <div class="sd-title">${escapeHtml(m.title || m.name)}</div>
-    <div class="sd-meta">${m.year || ""} ${m.file_info ? "· " + escapeHtml(m.file_info) : ""}</div>
-    <div class="sd-meta">${escapeHtml((m.genres || []).join(", "))}</div>
-    <div class="sd-meta">${m.director ? "Director: " + escapeHtml(m.director) : ""}</div>
-    <div class="sd-meta">${m.country ? "Country: " + escapeHtml(m.country) : ""}</div>
-    <p class="overview">${escapeHtml(m.overview || "")}</p>
-    <div class="sd-actions">
-      <button class="btn primary" id="sdPlay">▶ Play</button>
-      <button class="btn" id="sdBrowser">Browser play</button>
-    </div>`;
-  detail.appendChild(div);
-  detail.querySelector("#sdPlay").onclick = async () => {
-    const sub = (m.subtitles && m.subtitles.length) ? m.subtitles[0].path : null;
-    currentSub = sub; subsOn = !!sub; currentMovie = m;
-    await api("/api/play", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: m.path, sub: subsOn ? sub : null }) });
-    showPlayerBar(m); startPolling();
-  };
-  detail.querySelector("#sdBrowser").onclick = () => {
-    window.open(`/player.html?path=${encodeURIComponent(m.path)}&sub=${encodeURIComponent((m.subtitles&&m.subtitles[0])?m.subtitles[0].path:"")}`, "_blank");
-  };
+  detail.innerHTML = "<p style='color:var(--muted)'>Loading…</p>";
   currentMovie = m;
-  // fetch subtitles
-  api(`/api/subtitles?path=${encodeURIComponent(m.path)}`).then((sdata) => {
-    if (sdata.subtitles && sdata.subtitles.length) {
-      currentSub = sdata.subtitles[0].path;
-      subsOn = true;
+  api(`/api/movie?path=${encodeURIComponent(m.path)}`).then((data) => {
+    const dm = (data && data.movie) || m;
+    currentMovie = dm;
+    const poster = imgUrl(dm, "poster");
+    const backdrop = imgUrl(dm, "backdrop");
+    if (backdrop) {
+      detail.style.backgroundImage = `url(${backdrop})`;
+      detail.style.backgroundSize = "cover";
+      detail.style.backgroundPosition = "center";
+    } else {
+      detail.style.backgroundImage = "";
     }
-  }).catch(()=>{});
+    const div = document.createElement("div");
+    div.style.background = "rgba(15,17,21,.75)";
+    div.style.padding = "16px";
+    div.style.borderRadius = "8px";
+    div.innerHTML = `
+      <img class="sd-poster" src="${poster}" alt="" />
+      <div class="sd-title">${escapeHtml(dm.custom_title || dm.title || m.title || m.name)}</div>
+      <div class="sd-meta">${dm.year || m.year || ""} ${dm.file_info ? "· " + escapeHtml(dm.file_info) : ""}</div>
+      <div class="sd-meta">${escapeHtml((dm.genres || m.genres || []).join(", "))}</div>
+      <div class="sd-meta">${dm.director ? "Director: " + escapeHtml(dm.director) : ""}</div>
+      <div class="sd-meta">${dm.country ? "Country: " + escapeHtml(dm.country) : ""}</div>
+      <div class="sd-meta">${dm.rating ? "★ " + Number(dm.rating).toFixed(1) : ""}</div>
+      <p class="tagline">${escapeHtml(dm.tagline || "")}</p>
+      <p class="overview">${escapeHtml(dm.overview || "")}</p>
+      ${dm.trailer_key ? `<div class="sd-meta"><a href="https://www.youtube.com/watch?v=${dm.trailer_key}" target="_blank" style="color:var(--accent2)">▶ Trailer</a></div>` : ""}
+      <div class="sd-actions">
+        <button class="btn primary" id="sdPlay">▶ Play</button>
+        <button class="btn" id="sdBrowser">Browser play</button>
+        <button class="btn" id="sdArt">Change art</button>
+        <button class="btn" id="sdRename">✎ Rename</button>
+      </div>`;
+    detail.innerHTML = "";
+    detail.appendChild(div);
+    div.querySelector("#sdPlay").onclick = async () => {
+      const sub = (dm.subtitles && dm.subtitles.length) ? dm.subtitles[0].path : (m.subtitles && m.subtitles[0] ? m.subtitles[0].path : null);
+      currentSub = sub; subsOn = !!sub; currentMovie = dm;
+      await api("/api/play", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: dm.path, sub: subsOn ? sub : null }) });
+      showPlayerBar(dm); startPolling();
+    };
+    div.querySelector("#sdBrowser").onclick = () => {
+      window.open(`/player.html?path=${encodeURIComponent(dm.path)}&sub=${encodeURIComponent((dm.subtitles&&dm.subtitles[0])?dm.subtitles[0].path:"")}`, "_blank");
+    };
+    div.querySelector("#sdArt").onclick = () => {
+      window._artTarget = "movie";
+      currentMovie = dm;
+      $("artModal").classList.remove("hidden");
+      $("artQuery").value = dm.title || dm.name || "";
+      doArtSearch();
+    };
+    div.querySelector("#sdRename").onclick = async () => {
+      const name = prompt("New name:", dm.custom_title || dm.title || dm.name || "");
+      if (!name || !name.trim()) return;
+      await api("/api/movie/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: dm.path, title: name.trim() }) });
+      dm.custom_title = name.trim(); dm.title = name.trim();
+      div.querySelector(".sd-title").textContent = name.trim();
+      await loadMovies();
+    };
+  }).catch(() => {
+    detail.innerHTML = "<p style='color:var(--muted)'>Failed to load details.</p>";
+  });
 }
 $("fClear").onclick = () => {
   ["fGenre","fCountry","fDirector","fActor","fYear"].forEach((id) => { $(id).value = ""; });
+  if ($("fSetsOnly")) $("fSetsOnly").checked = false;
   loadMovies();
 };
 ["fGenre","fCountry","fDirector","fActor","fYear"].forEach((id) => {
   $(id).addEventListener("change", loadMovies);
 });
-$("searchBox").addEventListener("input", () => { clearTimeout(window._searchTimer); window._searchTimer = setTimeout(loadMovies, 300); });
+if ($("fSetsOnly")) $("fSetsOnly").addEventListener("change", loadMovies);
+$("searchBox").addEventListener("input", () => { clearTimeout(window._searchTimer); window._searchTimer = setTimeout(loadMovies, 300); toggleSearchClear(); });
+toggleSearchClear();
+function toggleSearchClear() { $("searchClear").classList.toggle("hidden", !($("searchBox").value || "").trim()); }
+toggleSearchClear();
 
 // tabs
 document.querySelectorAll(".tab-btn").forEach((b) => {
@@ -839,6 +1040,7 @@ $("scanBtn").onclick = scan;
 loadConfig().then(() => {
   loadFilterOptions();
   loadMovies();
+  updateCounter();
 });
 
 // streaming
