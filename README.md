@@ -26,17 +26,17 @@ Then open http://127.0.0.1:8765
 
 ## Standalone scan (no app required)
 
-`scan_movies.py` scans the folders declared in `movie_player.conf.json`, enriches new or changed files, and updates the SQLite database **without starting the web server**. It can be run on demand or scheduled.
+`scan_movies.py` scans the folders declared in `movie_player.conf.json`, enriches new or changed files, and updates the SQLite database **without starting the web server**. It can be run on demand or scheduled. By default it scans **both movies and series**; use `--category` to restrict it.
 
 Keep `scan_movies.py` in the same folder as `movie_player.py`.
 
 ```
-python scan_movies.py                    # movies, incremental (fast)
+python scan_movies.py                    # movies and series, incremental (fast)
 python scan_movies.py --force            # re-fetch metadata and art
-python scan_movies.py --category all     # movies and series
+python scan_movies.py --category movie   # movies only
 python scan_movies.py --category series  # series only
 python scan_movies.py --dry-run          # list files, change nothing
-python scan_movies.py --dir "D:\\New"    # scan one folder only
+python scan_movies.py --dir "D:\\New" --category movie   # scan one folder only
 ```
 
 Each run writes a UTF-8 log to `logs/scan_<date>_<time>_<pid>.log` and also prints it to the console. The log lists every file with `NEW`, `UPDATE`, `SKIP` or `REMOVED`, plus a final summary (counts, errors, elapsed time). Exit codes: `0` success, `1` file errors, `2` no folders configured, `3` another scan is already running.
