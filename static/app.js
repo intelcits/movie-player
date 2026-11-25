@@ -1024,6 +1024,9 @@ $("fClear").onclick = () => {
 });
 if ($("fSetsOnly")) $("fSetsOnly").addEventListener("change", loadMovies);
 $("searchBox").addEventListener("input", () => { clearTimeout(window._searchTimer); window._searchTimer = setTimeout(loadMovies, 300); toggleSearchClear(); });
+function clearSearch() { $("searchBox").value = ""; toggleSearchClear(); loadMovies(); }
+const _sc = $("searchClear"); if (_sc) _sc.onclick = clearSearch;
+const _scb = $("searchClearBtn"); if (_scb) _scb.onclick = clearSearch;
 toggleSearchClear();
 function toggleSearchClear() { $("searchClear").classList.toggle("hidden", !($("searchBox").value || "").trim()); }
 toggleSearchClear();
