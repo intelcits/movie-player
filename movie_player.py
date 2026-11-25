@@ -1089,11 +1089,25 @@ def cache_image(url, force=False):
     return None
 
 
-def tmdb_details(tmdb_id):
+def parse_tmdb_ref(value):
+    """Extract a TMDB id and optional language from an id or a TMDB URL."""
+    s = str(value or "").strip()
+    if not s:
+        return None, None
+    lang = None
+    lm = re.search(r"[?&]language=([A-Za-z-]+)", s)
+    if lm:
+        lang = lm.group(1)
+    m = re.search(r"(\d+)", s)
+    return (int(m.group(1)) if m else None), lang
+
+
+def tmdb_details(tmdb_id, language=None):
     key = (CFG.get("tmdb_api_key") or "").strip()
     if not key or not HAS_REQUESTS or not tmdb_id:
         return None
-    cache_key = f"details_v2|{tmdb_id}"
+    lang = (language or "en-US").strip() or "en-US"
+    cache_key = f"details_v4|{tmdb_id}|{lang}"
     if cache_key in _tmdb_cache:
         return _tmdb_cache[cache_key]
     data = {}
@@ -1102,7 +1116,7 @@ def tmdb_details(tmdb_id):
     similar = {}
     for _attempt in range(3):
         try:
-            r = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}", params={"api_key": key, "language": "en-US"}, timeout=12)
+            r = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}", params={"api_key": key, "language": lang}, timeout=12)
             if r.status_code == 429:
                 time.sleep(2); continue
             data = r.json()
@@ -1112,7 +1126,7 @@ def tmdb_details(tmdb_id):
             cred = r2.json() if r2.status_code == 200 else {}
             # videos (trailers)
             try:
-                r3 = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}/videos", params={"api_key": key, "language": "en-US"}, timeout=12)
+                r3 = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}/videos", params={"api_key": key, "language": lang}, timeout=12)
                 if r3.status_code == 200:
                     videos = r3.json()
             except Exception:
@@ -1139,12 +1153,23 @@ def tmdb_details(tmdb_id):
     backdrop_path = data.get("backdrop_path")
     poster_url = ("https://image.tmdb.org/t/p/w500" + poster_path) if poster_path else None
     backdrop_url = ("https://image.tmdb.org/t/p/w1280" + backdrop_path) if backdrop_path else None
-    # trailer key
+    # trailer key (fall back to English videos when the localized list has none)
     trailer_key = None
     for v in (videos.get("results") or []):
         if v.get("site") == "YouTube" and v.get("type") in ("Trailer", "Teaser"):
             trailer_key = v.get("key")
             break
+    if not trailer_key and lang != "en-US":
+        try:
+            rv = requests.get(f"https://api.themoviedb.org/3/movie/{tmdb_id}/videos",
+                              params={"api_key": key, "language": "en-US"}, timeout=12)
+            if rv.status_code == 200:
+                for v in (rv.json().get("results") or []):
+                    if v.get("site") == "YouTube" and v.get("type") in ("Trailer", "Teaser"):
+                        trailer_key = v.get("key")
+                        break
+        except Exception:
+            pass
     # cast with photos
     cast_full = []
     for c in (cred.get("cast") or [])[:18]:
@@ -2013,8 +2038,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json({"result": tmdb_search(title, year or None)})
             return
         if path == "/api/tmdb/results":
-            title = urllib.parse.unquote(qs.get("title", [""])[0] or "")
-            year = qs.get("year", [""])[0] or None
+            title = urllib.parse.unquote(qs.get("title", [""])[0] or "").strip()
+            year = (qs.get("year", [""])[0] or "").strip() or None
+            # Accept "Title (Year)" / "Title, Year" in the title box.
+            if title:
+                m = re.match(r"^(.*?)\s*[\(\[]\s*(\d{4})\s*[\)\]]\s*$", title)
+                if m:
+                    title = m.group(1).strip()
+                    year = year or m.group(2)
+                elif not year:
+                    m = re.match(r"^(.*?)[\s,]+(\d{4})\s*$", title)
+                    if m:
+                        title = m.group(1).strip()
+                        year = m.group(2)
             key = (CFG.get("tmdb_api_key") or "").strip()
             out = []
             if key and HAS_REQUESTS and title:
@@ -2038,8 +2074,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json({"results": out})
             return
         if path == "/api/tmdb/details":
-            tid = qs.get("id", [""])[0]
-            d = tmdb_details(int(tid)) if tid else None
+            tid, lang = parse_tmdb_ref(qs.get("id", [""])[0])
+            lang = (qs.get("language", [""])[0] or "").strip() or lang
+            d = tmdb_details(tid, lang) if tid else None
             self._json({"details": d})
             return
         if path == "/api/subtitles":
@@ -2525,7 +2562,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/movie/apply_tmdb":
             p = norm_path(data.get("path"))
-            tmdb_id = data.get("tmdb_id")
+            tmdb_id, url_lang = parse_tmdb_ref(data.get("tmdb_id"))
+            lang = (data.get("language") or "").strip() or url_lang
             if not p or not tmdb_id:
                 self._json({"error": "missing"}, 400)
                 return
@@ -2534,7 +2572,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if cat == "series":
                 details = tmdb_details_tv(tmdb_id)
             else:
-                details = tmdb_details(tmdb_id)
+                details = tmdb_details(tmdb_id, lang)
             if not details or details.get("error"):
                 self._json({"error": "tmdb not found"}, 404)
                 return
@@ -2544,7 +2582,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 backdrop_local = poster_local
             conn = db_conn()
             try:
-                conn.execute("""UPDATE movies SET tmdb_id=?, title=?, year=?, overview=?, genres=?, runtime=?,
+                conn.execute("""UPDATE movies SET tmdb_id=?, title=?, custom_title=NULL, year=?, overview=?, genres=?, runtime=?,
                     director=?, "cast"=?, country=?, rating=?, poster_url=?, backdrop_url=?, poster_local=?,
                     backdrop_local=?, tagline=?, trailer_key=?, cast_json=?, similar_json=?,
                     collection_name=?, collection_id=?, scanned_at=?, tv_seasons_json=? WHERE path=?""",

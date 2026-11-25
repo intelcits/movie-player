@@ -30,8 +30,8 @@ Then open http://127.0.0.1:8765
 - TMDB posters, backdrops, overviews, taglines, ratings, genres, cast, director, country (paste your TMDB v3 API key in Settings).
 - Rich detail view: tagline, YouTube trailer embed, cast photos, and a "similar movies" strip from TMDB.
 - Better title parsing (strips release tags, codecs, brackets, audio channels, leading numbering, and James Bond branding).
-- Editable names: rename any movie or series from the detail view (✎ Rename); series rename applies to the whole show.
-- Split view now mirrors the detail view (metadata, trailer link, change art, rename).
+- Editable names: rename a movie or series from the ✎ Edit modal ("Save name"); the name changes without touching TMDB art or metadata.
+- Split view now mirrors the detail view (metadata, trailer link, ✎ Edit).
 - Series browse: Series → Season (with season cover) → Episode (with episode name and cover).
 - Movie sets filter: "Movie sets only" checkbox; collection view shows each movie as `Title (Year)`.
 - Country filter lists one country per line (coproductions still match).
@@ -51,7 +51,7 @@ Then open http://127.0.0.1:8765
 - Controls hide automatically when playback stops or finishes.
 - Movie detail view uses the backdrop art as a visible background.
 - Choose from 4 UI themes (Default, Kodi, Plex, Media Center) in Settings.
-- "Choose Media Art" button: search TMDB by title, fetch by TMDB URL/ID, search Google Images, or paste any image URL.
+- "✎ Edit" modal: search TMDB by title or `title (year)`; click a result to apply its full metadata and art. "Fetch & Apply" accepts a TMDB URL or numeric ID (a `?language=es` URL also fetches localized metadata). "Save name" only renames; "Save & Close" refreshes the detail view. Google Images and direct image URLs are also supported.
 - Sort movies by title, year, or recently added.
 - Streaming: Favorites/Wishlist (add/remove), click to search. TMDB Watchlist shown if session ID configured.
 - Streaming: embedded player opens in a new tab.

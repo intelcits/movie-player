@@ -243,17 +243,17 @@
 <div id="artModal" class="modal hidden">
   <div class="modal-card">
     <h2>✎ Edit Media</h2>
-    <div class="fb-path">
-      <input id="editNameInput" type="text" placeholder="Name (rename)" />
+    <div class="fb-path" id="editNameRow">
+      <input id="editNameInput" type="text" placeholder="Display name (rename only, no TMDB change)" />
       <button id="saveNameBtn" class="btn">Save name</button>
     </div>
     <div class="fb-path">
-      <input id="artQuery" type="text" placeholder="Search TMDB by title..." />
+      <input id="artQuery" type="text" placeholder="Search TMDB: title or title (year)" />
       <button id="artSearchBtn" class="btn">Search TMDB</button>
     </div>
     <div class="fb-path" style="margin-top:8px;">
-      <input id="artTmdbInput" type="text" placeholder="TMDB URL or ID (e.g. 11822 or themoviedb.org/movie/11822)" />
-      <button id="artFetchBtn" class="btn">Fetch by ID</button>
+      <input id="artTmdbInput" type="text" placeholder="TMDB URL or ID (e.g. 163924 or themoviedb.org/movie/163924-invasion?language=es)" />
+      <button id="artFetchBtn" class="btn">Fetch &amp; Apply</button>
     </div>
     <div class="fb-path" style="margin-top:8px;">
       <input id="artGoogleQuery" type="text" placeholder="Or search Google Images for media art..." />
@@ -263,10 +263,12 @@
       <input id="artUrlInput" type="text" placeholder="Or paste an image URL to use as art" />
       <button id="artUrlBtn" class="btn">Use this URL</button>
     </div>
+    <div id="editStatus" class="edit-status"></div>
     <div id="artPreview" class="stream-results"></div>
     <div id="artResults" class="stream-results"></div>
     <div class="modal-actions">
       <button id="artFrameBtn" class="btn">Use frame from movie</button>
+      <button id="artSaveCloseBtn" class="btn primary">Save &amp; Close</button>
       <button id="artClose" class="btn">Close</button>
     </div>
   </div>
