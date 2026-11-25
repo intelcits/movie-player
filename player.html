@@ -27,6 +27,7 @@
   const params = new URLSearchParams(location.search);
   const path = params.get("path");
   const sub = params.get("sub");
+  try { const sz = localStorage.getItem("mp_sub_size"); const col = localStorage.getItem("mp_sub_color"); if (sz) document.documentElement.style.setProperty("--sub-size", sz + "px"); if (col) document.documentElement.style.setProperty("--sub-color", col); } catch(e){}
   const vid = document.getElementById("vid");
   vid.src = "/api/file?path=" + encodeURIComponent(path);
   if (sub) {

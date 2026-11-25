@@ -10,6 +10,7 @@
 <body>
 <header class="topbar">
   <div class="brand">🎬 MoviePlayer</div>
+  <span id="mediaCounter" class="media-counter">Movies: 0 · Series: 0</span>
   <nav class="tabs">
     <button class="tab-btn active" data-tab="movies">Movies</button>
     <button class="tab-btn" data-tab="series">Series</button>
@@ -30,7 +31,10 @@
   <!-- Local media view (movies/series/musicals) -->
   <section id="libraryView">
     <div class="toolbar">
-      <input id="searchBox" type="search" placeholder="Search..." />
+      <div class="search-wrap">
+        <input id="searchBox" type="search" placeholder="Search..." />
+        <button id="searchClear" class="search-clear" title="Clear search" aria-label="Clear search">×</button>
+      </div>
       <select id="sortSelect">
         <option value="title_asc">Title A→Z</option>
         <option value="title_desc">Title Z→A</option>
@@ -49,6 +53,7 @@
       <select id="fDirector"><option value="">All directors</option></select>
       <select id="fActor"><option value="">All actors</option></select>
       <select id="fYear"><option value="">All years</option></select>
+      <label class="chk"><input type="checkbox" id="fSetsOnly" /> Movie sets only</label>
       <button id="fClear" class="btn small">Clear</button>
     </div>
     <div id="emptyState" class="empty">
@@ -71,6 +76,18 @@
     <div id="collGrid" class="grid"></div>
   </section>
 
+  <!-- Series view -->
+  <section id="seriesView" class="hidden">
+    <button id="seriesBackBtn" class="btn">\u2190 Back</button>
+    <h2 id="seriesTitle"></h2>
+    <div class="detail-actions">
+      <button id="seriesChangeArtBtn" class="btn">Change art</button>
+      <button id="seriesRenameBtn" class="btn">\u270e Rename</button>
+    </div>
+    <div id="seriesSeasons" class="grid"></div>
+    <div id="seasonEpisodes" class="grid hidden"></div>
+  </section>
+
   <!-- Detail view -->
   <section id="detailView" class="detail hidden">
     <button id="backBtn" class="btn">← Back</button>
@@ -80,6 +97,7 @@
       <div class="detail-info">
         <h1 id="dTitle"></h1>
         <p id="dTagline" class="tagline"></p>
+        <p id="dEpisode" class="detail-line"></p>
         <div class="meta-line">
           <span id="dYear"></span>
           <span id="dRating"></span>
@@ -103,6 +121,7 @@
           <button id="startOverBtn" class="btn hidden">⟲ Start over</button>
           <button id="browserPlayBtn" class="btn">Browser play</button>
           <button id="changeArtBtn" class="btn">Change art</button>
+          <button id="renameBtn" class="btn">✎ Rename</button>
           <select id="subSelect"></select>
         </div>
         <div class="detail-path" id="dPath"></div>
@@ -182,6 +201,23 @@
     </label>
     <label><input type="checkbox" id="sKiosk" /> Kiosk mode (fullscreen, no controls)</label>
     <label><input type="checkbox" id="sFullscreen" checked /> Full screen mode</label>
+    <label>Interface font size (px)
+      <input id="sFontSize" type="number" min="12" max="24" value="15" />
+    </label>
+    <label>Interface font
+      <select id="sFontFamily">
+        <option value="system">System (default)</option>
+        <option value="sans">Sans-serif</option>
+        <option value="serif">Serif</option>
+        <option value="mono">Monospace</option>
+      </select>
+    </label>
+    <label>Subtitle size (px)
+      <input id="sSubSize" type="number" min="12" max="60" value="28" />
+    </label>
+    <label>Subtitle color
+      <input id="sSubColor" type="color" value="#ffffff" />
+    </label>
     <h3>Library folders</h3>
     <label>Add to category
       <select id="fbCategory">

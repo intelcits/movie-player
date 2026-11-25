@@ -56,6 +56,10 @@ DEFAULT_CONFIG = {
     "theme": "default",
     "kiosk_mode": False,
     "fullscreen": True,
+    "ui_font_size": 15,
+    "ui_font_family": "system",
+    "sub_size": 28,
+    "sub_color": "#ffffff",
 }
 
 
@@ -144,6 +148,11 @@ def init_db():
             similar_json TEXT,
             collection_name TEXT,
             collection_id INTEGER,
+            season INTEGER,
+            episode INTEGER,
+            episode_title TEXT,
+            custom_title TEXT,
+            tv_seasons_json TEXT,
             file_mtime REAL,
             scanned_at REAL,
             sub_count INTEGER DEFAULT 0
@@ -163,6 +172,13 @@ def init_db():
         for col in ("tagline", "trailer_key", "cast_json", "similar_json", "collection_name", "collection_id"):
             if col not in cols:
                 conn.execute(f"ALTER TABLE movies ADD COLUMN {col} TEXT")
+        # series / movie-set fields
+        for col in ("season", "episode", "episode_title", "custom_title", "tv_seasons_json"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE movies ADD COLUMN {col} TEXT")
+        if "season" in cols or True:
+            # ensure integer typing not enforced by sqlite; leave as TEXT ok
+            pass
         # migrate musical -> movie
         conn.execute("UPDATE movies SET category='movie' WHERE category='musical'")
         # streaming favorites
@@ -260,24 +276,102 @@ def norm_path(p):
         return p
 
 
+_RELEASE_JUNK = re.compile(
+    r'\b(?:2160p|1440p|1080p|720p|576p|480p|4k|uhd|bluray|blu-ray|brrip|bdrip|bdremux|webrip|'
+    r'web-dl|webdl|web|hdrip|dvdrip|dvdscr|hdtv|pdtv|sdtv|x264|x265|h\.?264|h\.?265|hevc|avc|'
+    r'aac\d?(?:\.\d)?|ac3|eac3|dts(?:-hd)?|truehd|atmos|ddp?[257][\.\s][01]|[257][\.\s][01]|'
+    r'10bit|8bit|hdr10?|dv|remux|proper|repack|extended|unrated|uncut|remastered|directors?[\.\s]?cut|'
+    r'multi|dual|subs?|subbed|dubbed|amzn|dsnp|hmax|atvp|nf|yts(?:\.mx)?|rarbg|anoXmous|ozlem|tgx|'
+    r'pmedia|www\.[^\s]+)\b',
+    re.I,
+)
+_LEADING_NUM = re.compile(r'^\d{1,3}[\.\-_](?=[A-Za-z])')
+_BOND_PREFIX = re.compile(r'^(?:007[\s._-]*james[\s._-]*bond|james[\s._-]*bond[\s._-]*007)[\s._-]*', re.I)
+_BRACKET_JUNK = re.compile(r'\((?:[^)]*(?:1080p|720p|bluray|x264|x265|director|extended|unrated|remastered|dubbed|subbed|5[\.\s]1|7[\.\s]1)[^)]*)\)', re.I)
+
+
+def _clean_name(text):
+    text = re.sub(r'\[[^\]]*\]', ' ', text or '')
+    text = re.sub(r'\{[^}]*\}', ' ', text)
+    text = _BRACKET_JUNK.sub(' ', text)
+    text = _BOND_PREFIX.sub('', text)
+    text = _LEADING_NUM.sub('', text)
+    text = text.replace('_', ' ').replace('.', ' ')
+    text = _RELEASE_JUNK.sub(' ', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip(' .-_:[](){}')
+
+
+def _find_year(text):
+    """Prefer a year in parentheses/brackets, otherwise the last standalone year."""
+    m = re.search(r'[\(\[]\s*((?:19|20)\d{2})\s*[\)\]]', text)
+    if m:
+        return m.group(1), m.start(), m.end()
+    years = list(re.finditer(r'\b(?:19\d{2}|20\d{2})\b', text))
+    if years:
+        m = years[-1]
+        return m.group(0), m.start(), m.end()
+    return None, -1, -1
+
+
+_EP_PATTERNS = [
+    (re.compile(r'\bS(\d{1,2})[\s._-]*E(\d{1,3})\b', re.I), 'sxxexx'),
+    (re.compile(r'\bT(\d{1,2})[\s._-]*E(\d{1,3})\b', re.I), 'sxxexx'),
+    (re.compile(r'\b(\d{1,2})x(\d{1,3})\b'), 'sxxexx'),
+    (re.compile(r'\bCap(?:[ií]tulo)?\.?\s*(\d{3,4})\b', re.I), 'capnum'),
+    (re.compile(r'\bCap(?:[ií]tulo)?\.?\s*(\d{1,2})\b', re.I), 'cap'),
+    (re.compile(r'\b(?:Episodio|Episode|Ep)\.?\s*(\d{1,4})\b', re.I), 'ep'),
+    (re.compile(r'(?:^|[\s._-])E(\d{1,3})(?:[\s._-]|$)', re.I), 'ep'),
+]
+
+
+def parse_episode_info(stem):
+    """Return season/episode/series/episode_title for a series filename, or None."""
+    for rx, kind in _EP_PATTERNS:
+        m = rx.search(stem)
+        if not m:
+            continue
+        if kind == 'sxxexx':
+            season, episode = int(m.group(1)), int(m.group(2))
+        elif kind == 'capnum':
+            digits = m.group(1)
+            if len(digits) == 3:
+                season, episode = int(digits[0]), int(digits[1:])
+            else:
+                season, episode = int(digits[:2]), int(digits[2:])
+        else:
+            season, episode = 1, int(m.group(1))
+        base = stem[:m.start()]
+        rest = stem[m.end():]
+        return {
+            "season": season or 1,
+            "episode": episode,
+            "series": _clean_name(base) or None,
+            "episode_title": _clean_name(rest) or None,
+        }
+    return None
+
+
+def clean_series_name(name):
+    name = name or ''
+    name = re.sub(r'\[[^\]]*\]', ' ', name)
+    name = re.sub(r'\{[^}]*\}', ' ', name)
+    name = re.sub(r'\((?:19|20)\d{2}(?:\s*[-\u2013]\s*(?:19|20)\d{2})?\)', ' ', name)
+    name = _clean_name(name)
+    name = re.sub(r'\s+', ' ', name).strip(' .-_:')
+    return name
+
+
 def parse_title_year(filename):
     stem = Path(filename).stem
-    m = re.search(r'\((\d{4})\)', stem)
-    if m:
-        year = m.group(1)
-        title = stem[:m.start()].strip(" .-_")
-        return title or stem, year
-    m = re.search(r'\b(19|20)\d{2}\b', stem)
-    if m:
-        year = m.group(0)
-        title = stem[:m.start()].strip(" .-_")
-        if title:
-            return title, year
-    # strip common release tags
-    title = re.sub(r'[\._]', ' ', stem)
-    title = re.sub(r'\b(1080p|720p|2160p|4k|bluray|brrip|webrip|webdl|hdrip|x264|x265|h264|h265|hevc|aac|ac3)\b', '', title, flags=re.I)
-    title = re.sub(r'\s+', ' ', title).strip()
-    return title or stem, None
+    year, start, end = _find_year(stem)
+    if year:
+        title = _clean_name(stem[:start])
+        if not title:
+            title = _clean_name(stem[end:])
+    else:
+        title = _clean_name(stem)
+    return title or _clean_name(stem) or stem, year
 
 
 def find_subtitles(video_path):
@@ -323,7 +417,7 @@ def sub_label(path):
     return name
 
 
-def scan_dir(root):
+def scan_dir(root, category=None):
     root = norm_path(root)
     results = []
     if not root or not os.path.isdir(root):
@@ -337,68 +431,35 @@ def scan_dir(root):
             if ext in VIDEO_EXTS:
                 full = os.path.join(dp, f)
                 video_files.append((dp, f, full, ext))
-    # compute recursive folder video counts
+    # recursive folder video counts (each file contributes to every ancestor)
     folder_counts = {}
     for dp, f, full, ext in video_files:
         rel = os.path.relpath(dp, root)
         if rel == ".":
             continue
-        parts = rel.split(os.sep)
         cum = ""
-        for part in parts:
+        for part in rel.split(os.sep):
             cum = os.path.join(cum, part) if cum else part
             folder_counts[cum] = folder_counts.get(cum, 0) + 1
-    # Actually folder_counts above counts files directly in each folder only (since os.walk visits each dp).
-    # Recompute as recursive counts:
-    folder_counts = {}
+    is_series = (category or "").lower() == "series"
     for dp, f, full, ext in video_files:
         rel = os.path.relpath(dp, root)
-        if rel == ".":
-            continue
-        parts = rel.split(os.sep)
-        cum = ""
-        for part in parts:
-            cum = os.path.join(cum, part) if cum else part
-            folder_counts[cum] = folder_counts.get(cum, 0) + 1
-    # The above counts each file once per ancestor, so it's recursive-ish (each file contributes to all ancestors). Good.
-    for dp, f, full, ext in video_files:
-        rel = os.path.relpath(dp, root)
-        title, year = parse_title_year(f)
+        # highest ancestor folder that contains more than one video
+        collection = None
+        if rel != ".":
+            cum = ""
+            for part in rel.split(os.sep):
+                cum = os.path.join(cum, part) if cum else part
+                if collection is None and folder_counts.get(cum, 0) > 1:
+                    collection = cum
         subs = find_subtitles(full)
         try:
             mtime = os.path.getmtime(full)
         except OSError:
             mtime = None
-        # determine collection: highest ancestor folder (closest to root) with >1 video
-        collection = None
-        if rel != ".":
-            parts = rel.split(os.sep)
-            cum = ""
-            for part in parts:
-                cum = os.path.join(cum, part) if cum else part
-                if folder_counts.get(cum, 0) > 1:
-                    collection = cum  # keep first (highest) by not overwriting once set? 
-                    break
-            # Wait: we want the FIRST ancestor with >1. The loop goes top-down, so first found is highest. break after first.
-        # But if first ancestor has count 1, skip and check next. The break only after >1. Good.
-        # However, if the first ancestor has 1 but a deeper has >1, we skip first and set collection to deeper. But we break at first >1, which would be the deeper. That's not desired (we want highest >1). 
-        # Redo: find highest ancestor with >1.
-        collection = None
-        if rel != ".":
-            parts = rel.split(os.sep)
-            cum = ""
-            for part in parts:
-                cum = os.path.join(cum, part) if cum else part
-                if folder_counts.get(cum, 0) > 1:
-                    if collection is None:
-                        collection = cum
-                    # don't break; keep first
-            # collection now is the first (highest) ancestor with >1
-        results.append({
+        entry = {
             "path": full,
             "name": f,
-            "title": title,
-            "year": year,
             "size": os.path.getsize(full),
             "ext": ext,
             "browser_playable": ext in BROWSER_PLAYABLE,
@@ -406,8 +467,33 @@ def scan_dir(root):
             "sub_count": len(subs),
             "mtime": mtime,
             "collection": collection,
-        })
-    results.sort(key=lambda x: (x["title"] or x["name"]).lower())
+            "category": category,
+        }
+        if is_series:
+            ep = parse_episode_info(Path(f).stem)
+            folder_name = clean_series_name(Path(collection).name) if collection else ""
+            parsed_title, parsed_year = parse_title_year(f)
+            series_title = folder_name or (ep or {}).get("series") or parsed_title
+            series_year = None
+            if collection:
+                ym = re.search(r'((?:19|20)\d{2})', Path(collection).name)
+                if ym:
+                    series_year = ym.group(1)
+            if not series_year:
+                series_year = parsed_year
+            entry.update({
+                "title": series_title,
+                "year": series_year,
+                "season": (ep or {}).get("season") or 1,
+                "episode": (ep or {}).get("episode"),
+                "episode_title": (ep or {}).get("episode_title"),
+            })
+        else:
+            title, year = parse_title_year(f)
+            entry["title"] = title
+            entry["year"] = year
+        results.append(entry)
+    results.sort(key=lambda x: ((x.get("title") or x["name"]).lower(), x.get("season") or 0, x.get("episode") or 0))
     return results
 
 
@@ -423,34 +509,59 @@ def get_db_movie(path):
 def upsert_movie_db(data):
     conn = db_conn()
     try:
-        conn.execute("""
-        INSERT INTO movies (path,title,year,tmdb_id,overview,genres,runtime,director,"cast",country,
-            rating,poster_url,backdrop_url,poster_local,backdrop_local,duration,width,height,codec,audio,
-            file_info,category,collection,resume_position,tagline,trailer_key,cast_json,similar_json,
-            collection_name,collection_id,file_mtime,scanned_at,sub_count)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(path) DO UPDATE SET
-            title=excluded.title, year=excluded.year, tmdb_id=excluded.tmdb_id, overview=excluded.overview,
-            genres=excluded.genres, runtime=excluded.runtime, director=excluded.director, "cast"=excluded."cast",
-            country=excluded.country, rating=excluded.rating, poster_url=excluded.poster_url,
-            backdrop_url=excluded.backdrop_url, poster_local=excluded.poster_local, backdrop_local=excluded.backdrop_local,
-            duration=excluded.duration, width=excluded.width, height=excluded.height, codec=excluded.codec,
-            audio=excluded.audio, file_info=excluded.file_info, category=excluded.category, collection=excluded.collection,
-            resume_position=excluded.resume_position, tagline=excluded.tagline, trailer_key=excluded.trailer_key,
-            cast_json=excluded.cast_json, similar_json=excluded.similar_json, collection_name=excluded.collection_name,
-            collection_id=excluded.collection_id, file_mtime=excluded.file_mtime, scanned_at=excluded.scanned_at, sub_count=excluded.sub_count
-        """, (
-            data.get("path"), data.get("title"), data.get("year"), data.get("tmdb_id"),
-            data.get("overview"), json.dumps(data.get("genres") or []), data.get("runtime"),
-            data.get("director"), json.dumps(data.get("cast") or []), data.get("country"),
-            data.get("rating"), data.get("poster_url"), data.get("backdrop_url"),
-            data.get("poster_local"), data.get("backdrop_local"), data.get("duration"),
-            data.get("width"), data.get("height"), data.get("codec"), data.get("audio"),
-            data.get("file_info"), data.get("category"), data.get("collection"), data.get("resume_position"),
-            data.get("tagline"), data.get("trailer_key"), json.dumps(data.get("cast_full") or []),
-            json.dumps(data.get("similar") or []), data.get("collection_name"), data.get("collection_id"),
-            data.get("mtime"), time.time(), data.get("sub_count", 0),
-        ))
+        _cols = ["path", "title", "custom_title", "year", "tmdb_id", "overview", "genres",
+                 "runtime", "director", "cast", "country", "rating", "poster_url", "backdrop_url",
+                 "poster_local", "backdrop_local", "resume_position", "tagline", "trailer_key",
+                 "cast_json", "similar_json", "collection_name", "collection_id", "duration",
+                 "width", "height", "codec", "audio", "file_info", "category", "collection",
+                 "season", "episode", "episode_title", "tv_seasons_json", "file_mtime",
+                 "scanned_at", "sub_count"]
+        vals = [
+            data.get("path"),
+            data.get("title"),
+            data.get("custom_title"),
+            data.get("year"),
+            data.get("tmdb_id"),
+            data.get("overview"),
+            json.dumps(data.get("genres") or []),
+            data.get("runtime"),
+            data.get("director"),
+            json.dumps(data.get("cast") or []),
+            data.get("country"),
+            data.get("rating"),
+            data.get("poster_url"),
+            data.get("backdrop_url"),
+            data.get("poster_local"),
+            data.get("backdrop_local"),
+            data.get("resume_position"),
+            data.get("tagline"),
+            data.get("trailer_key"),
+            json.dumps(data.get("cast_full") or (data.get("cast_json") and json.loads(data.get("cast_json")) or [])),
+            json.dumps(data.get("similar") or (data.get("similar_json") and json.loads(data.get("similar_json")) or [])),
+            data.get("collection_name"),
+            data.get("collection_id"),
+            data.get("duration"),
+            data.get("width"),
+            data.get("height"),
+            data.get("codec"),
+            data.get("audio"),
+            data.get("file_info"),
+            data.get("category"),
+            data.get("collection"),
+            data.get("season"),
+            data.get("episode"),
+            data.get("episode_title"),
+            json.dumps(data.get("tv_seasons") or (data.get("tv_seasons_json") and json.loads(data.get("tv_seasons_json")) or [])),
+            data.get("mtime"),
+            time.time(),
+            data.get("sub_count", 0),
+        ]
+        quoted = ['"cast"' if c == "cast" else c for c in _cols]
+        collist = ", ".join(quoted)
+        placeholders = ", ".join(["?"] * len(_cols))
+        update = ", ".join(f'{q}=excluded.{q}' for q in quoted if q != "path")
+        sql = f"INSERT INTO movies ({collist}) VALUES ({placeholders}) ON CONFLICT(path) DO UPDATE SET {update}"
+        conn.execute(sql, vals)
         conn.commit()
     finally:
         conn.close()
@@ -571,6 +682,14 @@ def enrich_entry(entry, category=None, force=False):
         entry["collection_name"] = existing.get("collection_name")
         entry["collection_id"] = existing.get("collection_id")
         entry["resume_position"] = existing.get("resume_position")
+        entry["season"] = existing.get("season")
+        entry["episode"] = existing.get("episode")
+        entry["episode_title"] = existing.get("episode_title")
+        entry["custom_title"] = existing.get("custom_title")
+        try:
+            entry["tv_seasons"] = json.loads(existing.get("tv_seasons_json") or "[]")
+        except Exception:
+            entry["tv_seasons"] = []
         if force:
             entry["poster_local"] = cache_image(entry.get("poster_url"), force=True)
             entry["backdrop_local"] = cache_image(entry.get("backdrop_url"), force=True)
@@ -590,9 +709,24 @@ def enrich_entry(entry, category=None, force=False):
         title = entry.get("title")
         year = entry.get("year")
         entry["resume_position"] = existing.get("resume_position") if existing else None
-        search_res = tmdb_search(title, year)
-        tmdb_id = search_res.get("id") if search_res else None
-        details = tmdb_details(tmdb_id) if tmdb_id else None
+        entry["custom_title"] = existing.get("custom_title") if existing else None
+        entry["season"] = entry.get("season")
+        entry["episode"] = entry.get("episode")
+        entry["episode_title"] = entry.get("episode_title")
+        if not entry.get("season"):
+            entry["season"] = existing.get("season") if existing else None
+        if not entry.get("episode"):
+            entry["episode"] = existing.get("episode") if existing else None
+        if not entry.get("episode_title"):
+            entry["episode_title"] = existing.get("episode_title") if existing else None
+        if category == "series":
+            search_res = tmdb_search_tv(title, year)
+            tmdb_id = search_res.get("id") if search_res else None
+            details = tmdb_details_tv(tmdb_id) if tmdb_id else None
+        else:
+            search_res = tmdb_search(title, year)
+            tmdb_id = search_res.get("id") if search_res else None
+            details = tmdb_details(tmdb_id) if tmdb_id else None
         if details:
             entry["tmdb_id"] = details.get("tmdb_id")
             entry["title"] = details.get("title") or entry.get("title")
@@ -613,6 +747,7 @@ def enrich_entry(entry, category=None, force=False):
             entry["similar"] = details.get("similar") or []
             entry["collection_name"] = details.get("collection_name")
             entry["collection_id"] = details.get("collection_id")
+            entry["tv_seasons"] = details.get("tv_seasons") or []
         else:
             entry["tmdb_id"] = tmdb_id
             entry["overview"] = search_res.get("overview") if search_res else None
@@ -656,6 +791,11 @@ def enrich_entry(entry, category=None, force=False):
         "similar": entry.get("similar"),
         "collection_name": entry.get("collection_name"),
         "collection_id": entry.get("collection_id"),
+        "season": entry.get("season"),
+        "episode": entry.get("episode"),
+        "episode_title": entry.get("episode_title"),
+        "custom_title": entry.get("custom_title"),
+        "tv_seasons": entry.get("tv_seasons"),
         "duration": entry.get("duration"),
         "width": entry.get("width"),
         "height": entry.get("height"),
@@ -768,6 +908,155 @@ def tmdb_search(title, year):
     save_tmdb_cache()
     return out
 
+
+def tmdb_search_tv(name, year):
+    key = (CFG.get("tmdb_api_key") or "").strip()
+    if not key or not HAS_REQUESTS:
+        return None
+    cache_key = "tvsearch|" + str(name) + "|" + str(year or "")
+    if cache_key in _tmdb_cache:
+        return _tmdb_cache[cache_key]
+    params = {"api_key": key, "query": name, "include_adult": "false", "language": "en-US"}
+    if year:
+        try:
+            params["first_air_date_year"] = int(str(year)[:4])
+        except Exception:
+            pass
+    for _attempt in range(3):
+        try:
+            r = requests.get("https://api.themoviedb.org/3/search/tv", params=params, timeout=12)
+            if r.status_code == 429:
+                time.sleep(2)
+                continue
+            data = r.json()
+            break
+        except Exception as e:
+            return {"error": str(e)}
+    else:
+        return None
+    res = data.get("results") or []
+    if not res:
+        _tmdb_cache[cache_key] = None
+        save_tmdb_cache()
+        return None
+    m = res[0]
+    out = {
+        "id": m.get("id"),
+        "title": m.get("name"),
+        "year": (m.get("first_air_date") or "")[:4],
+        "overview": m.get("overview"),
+        "rating": m.get("vote_average"),
+        "poster": ("https://image.tmdb.org/t/p/w500" + m["poster_path"]) if m.get("poster_path") else None,
+        "backdrop": ("https://image.tmdb.org/t/p/w1280" + m["backdrop_path"]) if m.get("backdrop_path") else None,
+    }
+    _tmdb_cache[cache_key] = out
+    save_tmdb_cache()
+    return out
+
+
+def tmdb_details_tv(tv_id):
+    key = (CFG.get("tmdb_api_key") or "").strip()
+    if not key or not HAS_REQUESTS or not tv_id:
+        return None
+    cache_key = "tvd|" + str(tv_id)
+    if cache_key in _tmdb_cache:
+        return _tmdb_cache[cache_key]
+    data = {}
+    cred = {}
+    videos = {}
+    similar = {}
+    for _attempt in range(3):
+        try:
+            r = requests.get("https://api.themoviedb.org/3/tv/" + str(tv_id), params={"api_key": key, "language": "en-US"}, timeout=12)
+            if r.status_code == 429:
+                time.sleep(2); continue
+            data = r.json()
+            r2 = requests.get("https://api.themoviedb.org/3/tv/" + str(tv_id) + "/credits", params={"api_key": key}, timeout=12)
+            if r2.status_code == 429:
+                time.sleep(2); continue
+            cred = r2.json() if r2.status_code == 200 else {}
+            try:
+                r3 = requests.get("https://api.themoviedb.org/3/tv/" + str(tv_id) + "/videos", params={"api_key": key, "language": "en-US"}, timeout=12)
+                if r3.status_code == 200:
+                    videos = r3.json()
+            except Exception:
+                pass
+            try:
+                r4 = requests.get("https://api.themoviedb.org/3/tv/" + str(tv_id) + "/similar", params={"api_key": key, "language": "en-US"}, timeout=12)
+                if r4.status_code == 200:
+                    similar = r4.json()
+            except Exception:
+                pass
+            break
+        except Exception as e:
+            return {"error": str(e)}
+    genres = [g.get("name") for g in (data.get("genres") or []) if g.get("name")]
+    countries = [c for c in (data.get("origin_country") or [])]
+    creators = [c.get("name") for c in (data.get("created_by") or []) if c.get("name")]
+    director = ", ".join(creators) if creators else None
+    cast = []
+    cast_full = []
+    for c in (cred.get("cast") or [])[:18]:
+        if c.get("name"):
+            cast.append(c.get("name"))
+            cast_full.append({
+                "name": c.get("name"),
+                "character": c.get("character"),
+                "profile": ("https://image.tmdb.org/t/p/w185" + c["profile_path"]) if c.get("profile_path") else None,
+            })
+    poster_path = data.get("poster_path")
+    backdrop_path = data.get("backdrop_path")
+    poster_url = ("https://image.tmdb.org/t/p/w500" + poster_path) if poster_path else None
+    backdrop_url = ("https://image.tmdb.org/t/p/w1280" + backdrop_path) if backdrop_path else None
+    trailer_key = None
+    for v in (videos.get("results") or []):
+        if v.get("site") == "YouTube" and v.get("type") in ("Trailer", "Teaser"):
+            trailer_key = v.get("key")
+            break
+    similar_list = []
+    for m in (similar.get("results") or [])[:12]:
+        if m.get("name"):
+            similar_list.append({
+                "id": m.get("id"),
+                "title": m.get("name"),
+                "year": (m.get("first_air_date") or "")[:4],
+                "poster": ("https://image.tmdb.org/t/p/w185" + m["poster_path"]) if m.get("poster_path") else None,
+            })
+    seasons = []
+    for s in (data.get("seasons") or []):
+        if (s.get("season_number") or 0) == 0:
+            continue
+        sp = s.get("poster_path")
+        seasons.append({
+            "season": s.get("season_number"),
+            "name": s.get("name"),
+            "poster": ("https://image.tmdb.org/t/p/w342" + sp) if sp else None,
+            "episode_count": s.get("episode_count"),
+        })
+    out = {
+        "tmdb_id": data.get("id"),
+        "title": data.get("name"),
+        "year": (data.get("first_air_date") or "")[:4],
+        "overview": data.get("overview"),
+        "tagline": data.get("tagline"),
+        "genres": genres,
+        "runtime": (data.get("episode_run_time") or [None])[0],
+        "director": director,
+        "cast": cast,
+        "cast_full": cast_full,
+        "country": ", ".join(countries) if countries else None,
+        "rating": data.get("vote_average"),
+        "poster_url": poster_url,
+        "backdrop_url": backdrop_url,
+        "trailer_key": trailer_key,
+        "similar": similar_list,
+        "collection_name": data.get("name"),
+        "collection_id": data.get("id"),
+        "tv_seasons": seasons,
+    }
+    _tmdb_cache[cache_key] = out
+    save_tmdb_cache()
+    return out
 
 def cache_image(url, force=False):
     if not url:
@@ -1091,12 +1380,24 @@ def _focus_ffplay():
         pass
 
 
+def ass_color(hex_color):
+    h = (hex_color or "#ffffff").lstrip("#").strip()
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    if len(h) != 6:
+        return "&H00FFFFFF"
+    r, g, b = h[0:2], h[2:4], h[4:6]
+    return ("&H00" + b + g + r).upper()
+
+
 def _launch_ffplay(path, sub, pos, volume, gen):
     cmd = [tool_path("ffplay"), "-window_title", "MoviePlayer",
            "-autoexit", "-ss", f"{pos:.3f}", "-volume", str(int(volume))]
     if sub:
         esc = escape_sub_path(sub)
-        cmd += ["-vf", f"subtitles='{esc}'"]
+        sub_size = int(CFG.get("sub_size") or 28)
+        sub_color = ass_color(CFG.get("sub_color") or "#ffffff")
+        cmd += ["-vf", f"subtitles='{esc}':force_style='FontSize={sub_size},PrimaryColour={sub_color},OutlineColour=&H00000000,BorderStyle=1,Outline=2'"]
     cmd += [path]
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
@@ -1652,11 +1953,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 key = (category or "movie") + "_dirs"
                 dirs_to_scan = CFG.get(key, [])
+            cat = category or "movie"
             results = []
             for root in dirs_to_scan:
                 rp = norm_path(root)
                 if rp and os.path.isdir(rp):
-                    results.extend(scan_dir(rp))
+                    results.extend(scan_dir(rp, cat))
             # de-dup by path
             seen = set()
             uniq = []
@@ -1665,7 +1967,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     continue
                 seen.add(r["path"])
                 uniq.append(r)
-            cat = category or "movie"
             # enrich + store metadata (TMDB etc.) in parallel
             from concurrent.futures import ThreadPoolExecutor, as_completed
             errors = []
@@ -1783,6 +2084,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             year = (qs.get("year", [""])[0] or "").strip()
             category = (qs.get("category", [""])[0] or "").strip().lower()
             sort = (qs.get("sort", ["title_asc"])[0] or "title_asc").strip().lower()
+            sets_only = qs.get("sets", ["0"])[0] in ("1", "true", "yes")
             conn = db_conn()
             try:
                 rows = conn.execute("SELECT * FROM movies ORDER BY title").fetchall()
@@ -1832,8 +2134,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 title_l = (r.get("title") or "").lower()
                 if q and q not in title_l:
                     continue
-                if country and country not in (r.get("country") or "").lower():
-                    continue
+                if country:
+                    _cs = [c.strip().lower() for c in (r.get("country") or "").split(",") if c.strip()]
+                    if country not in _cs:
+                        continue
                 if director and director not in (r.get("director") or "").lower():
                     continue
                 if actor and not any(actor in (c or "").lower() for c in cast):
@@ -1842,6 +2146,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     continue
                 if year and str(r.get("year") or "") != year:
                     continue
+                if sets_only and not (r.get("collection")):
+                    continue
+                try:
+                    r["countries"] = [c.strip() for c in (r.get("country") or "").split(",") if c.strip()]
+                except Exception:
+                    r["countries"] = []
                 out.append(r)
             self._json({"movies": out, "count": len(out)})
             return
@@ -1871,6 +2181,122 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 except Exception:
                     m["similar"] = []
             self._json({"movie": m})
+            return
+        if path == "/api/series":
+            q = (qs.get("q", [""])[0] or "").strip().lower()
+            genre = (qs.get("genre", [""])[0] or "").strip().lower()
+            country = (qs.get("country", [""])[0] or "").strip().lower()
+            actor = (qs.get("actor", [""])[0] or "").strip().lower()
+            year = (qs.get("year", [""])[0] or "").strip()
+            conn = db_conn()
+            try:
+                rows = conn.execute("SELECT * FROM movies WHERE category='series'").fetchall()
+                coll_rows = conn.execute("SELECT * FROM collections").fetchall()
+            finally:
+                conn.close()
+            coll_map = {dict(c)["name"]: dict(c) for c in coll_rows}
+            episodes = []
+            for r in rows:
+                r = dict(r)
+                if not os.path.isfile(r["path"]):
+                    continue
+                try:
+                    r["genres"] = json.loads(r.get("genres") or "[]")
+                except Exception:
+                    r["genres"] = []
+                try:
+                    r["cast"] = json.loads(r.get("cast") or "[]")
+                except Exception:
+                    r["cast"] = []
+                try:
+                    r["cast_full"] = json.loads(r.get("cast_json") or "[]")
+                except Exception:
+                    r["cast_full"] = []
+                try:
+                    r["similar"] = json.loads(r.get("similar_json") or "[]")
+                except Exception:
+                    r["similar"] = []
+                try:
+                    r["tv_seasons"] = json.loads(r.get("tv_seasons_json") or "[]")
+                except Exception:
+                    r["tv_seasons"] = []
+                title_l = (r.get("title") or "").lower()
+                et_l = (r.get("episode_title") or "").lower()
+                if q and q not in title_l and q not in et_l:
+                    continue
+                if genre and not any(genre in (g or "").lower() for g in r["genres"]):
+                    continue
+                if country:
+                    cs = [c.strip().lower() for c in (r.get("country") or "").split(",") if c.strip()]
+                    if country not in cs:
+                        continue
+                if actor and not any(actor in (c or "").lower() for c in r["cast"]):
+                    continue
+                if year and str(r.get("year") or "") != year:
+                    continue
+                episodes.append(r)
+            groups = {}
+            for r in episodes:
+                key = r.get("collection") or r.get("title")
+                g = groups.setdefault(key, {
+                    "key": key,
+                    "name": r.get("custom_title") or r.get("title"),
+                    "year": r.get("year"),
+                    "poster_url": r.get("poster_url"),
+                    "poster_local": r.get("poster_local"),
+                    "backdrop_url": r.get("backdrop_url"),
+                    "backdrop_local": r.get("backdrop_local"),
+                    "tmdb_id": r.get("tmdb_id"),
+                    "overview": r.get("overview"),
+                    "rating": r.get("rating"),
+                    "genres": r.get("genres") or [],
+                    "country": r.get("country"),
+                    "director": r.get("director"),
+                    "trailer_key": r.get("trailer_key"),
+                    "cast_full": r.get("cast_full") or [],
+                    "tv_seasons": r.get("tv_seasons") or [],
+                    "_seasons": {},
+                })
+                if key in coll_map:
+                    c = coll_map[key]
+                    g["poster_url"] = g["poster_url"] or c.get("poster_url")
+                    g["poster_local"] = g["poster_local"] or c.get("poster_local")
+                    g["backdrop_url"] = g["backdrop_url"] or c.get("backdrop_url")
+                    g["backdrop_local"] = g["backdrop_local"] or c.get("backdrop_local")
+                if not g["tv_seasons"]:
+                    g["tv_seasons"] = r.get("tv_seasons") or []
+                sn = int(r.get("season") or 1)
+                g["_seasons"].setdefault(sn, []).append(r)
+            out_series = []
+            for key, g in groups.items():
+                season_poster_map = {s.get("season"): s.get("poster") for s in (g["tv_seasons"] or [])}
+                season_name_map = {s.get("season"): s.get("name") for s in (g["tv_seasons"] or [])}
+                seasons = []
+                for sn in sorted(g["_seasons"]):
+                    eps = sorted(g["_seasons"][sn], key=lambda r: (r.get("episode") or 0))
+                    seasons.append({
+                        "season": sn,
+                        "name": season_name_map.get(sn),
+                        "poster": season_poster_map.get(sn) or g["poster_url"],
+                        "poster_local": g["poster_local"],
+                        "backdrop_url": g["backdrop_url"],
+                        "backdrop_local": g["backdrop_local"],
+                        "episodes": eps,
+                    })
+                g["seasons"] = seasons
+                del g["_seasons"]
+                out_series.append(g)
+            out_series.sort(key=lambda g: (g.get("name") or "").lower())
+            self._json({"series": out_series, "count": len(out_series)})
+            return
+        if path == "/api/counts":
+            conn = db_conn()
+            try:
+                mc = conn.execute("SELECT COUNT(*) c FROM movies WHERE category='movie'").fetchone()["c"]
+                sc = conn.execute("SELECT COUNT(DISTINCT COALESCE(collection,title)) c FROM movies WHERE category='series'").fetchone()["c"]
+            finally:
+                conn.close()
+            self._json({"movies": mc, "series": sc})
             return
         if path == "/api/streaming/sites":
             sites = get_streaming_sites()
@@ -1919,7 +2345,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             years = set()
             for r in rows:
                 if r.get("country"):
-                    countries.add(r["country"])
+                    for _c in str(r["country"]).replace("/", ",").split(","):
+                        _c = _c.strip()
+                        if _c:
+                            countries.add(_c)
                 if r.get("director"):
                     directors.add(r["director"])
                 if r.get("year"):
@@ -2047,6 +2476,52 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 upsert_collection(collection, poster_url=poster_url, backdrop_url=backdrop_url,
                                  poster_local=poster_local, backdrop_local=backdrop_local)
             self._json({"ok": True, "collection": get_collection(collection)})
+            return
+        if path == "/api/movie/rename":
+            p = norm_path(data.get("path"))
+            new_name = (data.get("title") or "").strip()
+            if not p or not new_name:
+                self._json({"error": "missing"}, 400)
+                return
+            conn = db_conn()
+            try:
+                conn.execute("UPDATE movies SET custom_title=?, title=? WHERE path=?", (new_name, new_name, p))
+                conn.commit()
+            finally:
+                conn.close()
+            m = get_db_movie(p)
+            if m:
+                try:
+                    m["genres"] = json.loads(m.get("genres") or "[]")
+                except Exception:
+                    m["genres"] = []
+                try:
+                    m["cast"] = json.loads(m.get("cast") or "[]")
+                except Exception:
+                    m["cast"] = []
+                try:
+                    m["cast_full"] = json.loads(m.get("cast_json") or "[]")
+                except Exception:
+                    m["cast_full"] = []
+                try:
+                    m["similar"] = json.loads(m.get("similar_json") or "[]")
+                except Exception:
+                    m["similar"] = []
+            self._json({"movie": m})
+            return
+        if path == "/api/series/rename":
+            key = data.get("collection") or data.get("key")
+            new_name = (data.get("title") or "").strip()
+            if not key or not new_name:
+                self._json({"error": "missing"}, 400)
+                return
+            conn = db_conn()
+            try:
+                conn.execute("UPDATE movies SET custom_title=?, title=? WHERE collection=? AND category='series'", (new_name, new_name, key))
+                conn.commit()
+            finally:
+                conn.close()
+            self._json({"ok": True, "name": new_name})
             return
         if path == "/api/play":
             res = do_play(data.get("path"), data.get("sub"), data.get("ss"), data.get("volume"))
