@@ -2054,29 +2054,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
             key = (CFG.get("tmdb_api_key") or "").strip()
             out = []
             if key and HAS_REQUESTS and title:
-                try:
-                    params = {"api_key": key, "query": title, "include_adult": "false"}
-                    if year:
-                        params["year"] = year
-                    r = requests.get("https://api.themoviedb.org/3/search/movie", params=params, timeout=12)
-                    for m in (r.json().get("results") or [])[:12]:
-                        out.append({
-                            "id": m.get("id"),
-                            "title": m.get("title"),
-                            "year": (m.get("release_date") or "")[:4],
-                            "overview": m.get("overview"),
-                            "rating": m.get("vote_average"),
-                            "poster": ("https://image.tmdb.org/t/p/w342" + m["poster_path"]) if m.get("poster_path") else None,
-                            "backdrop": ("https://image.tmdb.org/t/p/w780" + m["backdrop_path"]) if m.get("backdrop_path") else None,
-                        })
-                except Exception:
-                    pass
+                def _search(url, params, media_type):
+                    try:
+                        r = requests.get(url, params=params, timeout=12)
+                        if r.status_code != 200:
+                            return []
+                        items = []
+                        for m in (r.json().get("results") or [])[:12]:
+                            name = m.get("title") if media_type == "movie" else m.get("name")
+                            date = m.get("release_date") if media_type == "movie" else m.get("first_air_date")
+                            items.append({
+                                "id": m.get("id"),
+                                "title": name,
+                                "year": (date or "")[:4],
+                                "overview": m.get("overview"),
+                                "rating": m.get("vote_average"),
+                                "media_type": media_type,
+                                "popularity": m.get("popularity") or 0,
+                                "poster": ("https://image.tmdb.org/t/p/w342" + m["poster_path"]) if m.get("poster_path") else None,
+                                "backdrop": ("https://image.tmdb.org/t/p/w780" + m["backdrop_path"]) if m.get("backdrop_path") else None,
+                            })
+                        return items
+                    except Exception:
+                        return []
+                base = {"api_key": key, "query": title, "include_adult": "false", "language": "en-US"}
+                movie_params = dict(base)
+                tv_params = dict(base)
+                if year:
+                    movie_params["year"] = year
+                    tv_params["first_air_date_year"] = year
+                out = _search("https://api.themoviedb.org/3/search/movie", movie_params, "movie")
+                out += _search("https://api.themoviedb.org/3/search/tv", tv_params, "tv")
+                out.sort(key=lambda x: -(x.get("popularity") or 0))
             self._json({"results": out})
             return
         if path == "/api/tmdb/details":
             tid, lang = parse_tmdb_ref(qs.get("id", [""])[0])
             lang = (qs.get("language", [""])[0] or "").strip() or lang
-            d = tmdb_details(tid, lang) if tid else None
+            mtype = (qs.get("type", [""])[0] or qs.get("media_type", [""])[0] or "movie").strip().lower()
+            if not tid:
+                d = None
+            elif mtype == "tv":
+                d = tmdb_details_tv(tid)
+            else:
+                d = tmdb_details(tid, lang)
             self._json({"details": d})
             return
         if path == "/api/subtitles":
@@ -2560,6 +2581,49 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 conn.close()
             self._json({"ok": True, "name": new_name})
             return
+        if path == "/api/series/apply_tmdb":
+            key = data.get("collection") or data.get("key")
+            tmdb_id, url_lang = parse_tmdb_ref(data.get("tmdb_id"))
+            lang = (data.get("language") or "").strip() or url_lang
+            mtype = (data.get("media_type") or "tv").strip().lower()
+            if not key or not tmdb_id:
+                self._json({"error": "missing"}, 400)
+                return
+            details = tmdb_details(tmdb_id, lang) if mtype == "movie" else tmdb_details_tv(tmdb_id)
+            if not details or details.get("error"):
+                self._json({"error": "tmdb not found"}, 404)
+                return
+            poster_local = cache_image(details.get("poster_url"))
+            backdrop_local = cache_image(details.get("backdrop_url"))
+            if not backdrop_local and poster_local:
+                backdrop_local = poster_local
+            conn = db_conn()
+            try:
+                row = conn.execute("SELECT tv_seasons_json FROM movies WHERE collection=? AND category='series' LIMIT 1", (key,)).fetchone()
+                existing_seasons = row["tv_seasons_json"] if row else None
+                if details.get("tv_seasons") is not None:
+                    seasons_json = json.dumps(details.get("tv_seasons"))
+                else:
+                    seasons_json = existing_seasons or "[]"
+                conn.execute("""UPDATE movies SET tmdb_id=?, title=?, custom_title=NULL, year=?, overview=?, genres=?, runtime=?,
+                    director=?, "cast"=?, country=?, rating=?, poster_url=?, backdrop_url=?, poster_local=?,
+                    backdrop_local=?, tagline=?, trailer_key=?, cast_json=?, similar_json=?,
+                    collection_name=?, collection_id=?, scanned_at=?, tv_seasons_json=?
+                    WHERE collection=? AND category='series'""",
+                    (details.get("tmdb_id"), details.get("title"), details.get("year"), details.get("overview"),
+                     json.dumps(details.get("genres") or []), details.get("runtime"), details.get("director"),
+                     json.dumps(details.get("cast") or []), details.get("country"), details.get("rating"),
+                     details.get("poster_url"), details.get("backdrop_url"), poster_local, backdrop_local,
+                     details.get("tagline"), details.get("trailer_key"), json.dumps(details.get("cast_full") or []),
+                     json.dumps(details.get("similar") or []), details.get("collection_name"), details.get("collection_id"),
+                     time.time(), seasons_json, key))
+                conn.commit()
+            finally:
+                conn.close()
+            upsert_collection(key, poster_url=details.get("poster_url"), backdrop_url=details.get("backdrop_url"),
+                              poster_local=poster_local, backdrop_local=backdrop_local)
+            self._json({"ok": True, "details": details})
+            return
         if path == "/api/movie/apply_tmdb":
             p = norm_path(data.get("path"))
             tmdb_id, url_lang = parse_tmdb_ref(data.get("tmdb_id"))
@@ -2569,7 +2633,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             existing = get_db_movie(p) or {}
             cat = (data.get("category") or existing.get("category") or "movie").lower()
-            if cat == "series":
+            mtype = (data.get("media_type") or "").strip().lower()
+            if mtype == "tv" or (not mtype and cat == "series"):
                 details = tmdb_details_tv(tmdb_id)
             else:
                 details = tmdb_details(tmdb_id, lang)
