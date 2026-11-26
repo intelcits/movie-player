@@ -631,15 +631,13 @@ $("artFetchBtn").onclick = async () => {
 };
 
 async function doArtSearch() {
-  const raw = ($("artQuery").value || "").trim() || ($("editNameInput").value || "").trim();
+  const raw = ($("artQuery").value || "").trim();
   if (!raw) {
     setEditStatus("Type a title to search TMDB.", true);
     return;
   }
   const parsed = parseSearchQuery(raw);
-  let year = parsed.year;
-  if (!year && editTarget === "movie" && currentMovie) year = currentMovie.year || "";
-  if (!year && editTarget === "series" && currentSeries) year = currentSeries.year || "";
+  const year = parsed.year || "";
   $("artResults").innerHTML = "";
   $("artPreview").innerHTML = "";
   setEditStatus("Searching TMDB (movies and series)…");

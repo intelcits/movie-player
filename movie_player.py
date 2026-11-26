@@ -890,6 +890,22 @@ def tmdb_search(title, year):
     else:
         return None
     res = data.get("results") or []
+    # Fallback: drop the year filter if it produced nothing.
+    if not res and year:
+        params.pop("year", None)
+        for _attempt in range(3):
+            try:
+                r = requests.get("https://api.themoviedb.org/3/search/movie", params=params, timeout=12)
+                if r.status_code == 429:
+                    time.sleep(2)
+                    continue
+                data = r.json()
+                break
+            except Exception as e:
+                return {"error": str(e)}
+        else:
+            return None
+        res = data.get("results") or []
     if not res:
         _tmdb_cache[cache_key] = None
         save_tmdb_cache()
@@ -935,6 +951,22 @@ def tmdb_search_tv(name, year):
     else:
         return None
     res = data.get("results") or []
+    # Fallback: drop the year filter if it produced nothing.
+    if not res and "first_air_date_year" in params:
+        params.pop("first_air_date_year", None)
+        for _attempt in range(3):
+            try:
+                r = requests.get("https://api.themoviedb.org/3/search/tv", params=params, timeout=12)
+                if r.status_code == 429:
+                    time.sleep(2)
+                    continue
+                data = r.json()
+                break
+            except Exception as e:
+                return {"error": str(e)}
+        else:
+            return None
+        res = data.get("results") or []
     if not res:
         _tmdb_cache[cache_key] = None
         save_tmdb_cache()
@@ -2085,6 +2117,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     tv_params["first_air_date_year"] = year
                 out = _search("https://api.themoviedb.org/3/search/movie", movie_params, "movie")
                 out += _search("https://api.themoviedb.org/3/search/tv", tv_params, "tv")
+                # Fallback: if a year filter yielded nothing, retry without it.
+                if not out and year:
+                    out = _search("https://api.themoviedb.org/3/search/movie", dict(base), "movie")
+                    out += _search("https://api.themoviedb.org/3/search/tv", dict(base), "tv")
                 out.sort(key=lambda x: -(x.get("popularity") or 0))
             self._json({"results": out})
             return
