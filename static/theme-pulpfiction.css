@@ -1,0 +1,7 @@
+:root { --bg:#160d11; --panel:#281315; --panel2:#3a1b1d; --accent:#e2a845; --accent2:#b72b2c; --text:#fff0cd; --muted:#d0a979; --border:#74302b; --radius:2px; }
+body { background:#160d11 url('/static/img/theme-pulpfiction.svg') center top/cover fixed no-repeat; }
+.topbar { background:rgba(27,11,15,.94); border-bottom:2px solid #e2a845; }
+.brand,.card-title,h1,h2,h3 { font-family:Georgia,'Times New Roman',serif; }
+.brand { letter-spacing:.08em; text-transform:uppercase; }.brand-mark { color:#e2a845; }
+.btn,.tab-btn,.toolbar select,.toolbar input,.search-wrap input { border-radius:2px; }.btn { background:#321719; border-color:#8e5033; }.btn.primary,.tab-btn.active { background:#a91f28; border-color:#e2a845; }
+.grid { gap:22px 17px; }.card { background:linear-gradient(145deg,#49201f,#221012); border:1px solid #a7623b; box-shadow:5px 6px 0 rgba(0,0,0,.45); }.card:hover { transform:translateY(-6px) rotate(-.5deg); border-color:#f0bd58; box-shadow:8px 12px 0 rgba(0,0,0,.5),0 0 18px rgba(226,168,69,.25); }.card .poster { filter:saturate(.88) contrast(1.06); }.detail-info,.modal-card,.filters-panel { background:rgba(31,13,16,.92); border-color:#9b5a3b; }

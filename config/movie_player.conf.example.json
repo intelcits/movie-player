@@ -1,0 +1,21 @@
+{
+  "host": "127.0.0.1",
+  "port": 8765,
+  "movie_dirs": [],
+  "series_dirs": [],
+  "tmdb_api_key": "",
+  "tmdb_session_id": "",
+  "ffplay_path": "ffplay",
+  "ffprobe_path": "ffprobe",
+  "ffmpeg_path": "ffmpeg",
+  "volume": 80,
+  "skip_seconds": 10,
+  "theme": "videoclub",
+  "kiosk_mode": false,
+  "fullscreen": true,
+  "ui_font_size": 15,
+  "ui_font_family": "system",
+  "sub_size": 28,
+  "sub_color": "#ffffff",
+  "custom_streaming_sites": []
+}

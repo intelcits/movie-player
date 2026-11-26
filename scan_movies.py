@@ -3,8 +3,8 @@
 """
 Standalone library scanner for MoviePlayer.
 
-Scans the folders declared in movie_player.conf.json, enriches new/changed
-files with TMDB metadata and art, and updates .cache/movieplayer.db.
+Scans the folders declared in config/movie_player.conf.json, enriches
+new/changed files with TMDB metadata and art, and updates data/movieplayer.db.
 It does NOT start the web server, so it can be run on demand or scheduled.
 
 The script must live in the same folder as movie_player.py.
@@ -155,7 +155,7 @@ def scan(args, logger):
         logger.warning("TMDB API key is empty: metadata enrichment will be limited.")
     if not mp.HAS_REQUESTS:
         logger.warning("Python 'requests' is not installed: TMDB enrichment is disabled.")
-    if (HERE / "movie_player.pid").exists():
+    if mp.PID_FILE.exists():
         logger.warning("MoviePlayer appears to be running; the scan may overlap with the app.")
     for cat, d in plan:
         logger.info("Target  : [%s] %s", cat, d)
@@ -165,7 +165,7 @@ def scan(args, logger):
 
     lock = None
     if not args.dry_run:
-        lock = ScanLock(mp.CACHE_DIR / "scan.lock")
+        lock = ScanLock(mp.RUNTIME_DIR / "scan.lock")
         if not lock.acquire():
             logger.error("Another scan is already running (lock: %s). Exiting.", lock.path)
             return 3
@@ -274,7 +274,7 @@ def main():
         log_path = Path(args.log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
     else:
-        log_dir = HERE / "logs"
+        log_dir = mp.LOG_DIR
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / ("scan_%s_%d.log" % (datetime.now().strftime("%Y%m%d_%H%M%S"), os.getpid()))
 

@@ -1,0 +1,21 @@
+:root {
+  --bg:#080d18; --panel:#101a2d; --panel2:#162642; --accent:#52e7e0;
+  --accent2:#a15cff; --text:#eaf8ff; --muted:#88a6bd; --border:#29486a;
+  --radius:8px;
+}
+body { background:radial-gradient(circle at 15% 10%,#183253 0,#0b1222 38%,#05070e 100%); }
+body::after { content:""; position:fixed; inset:0; pointer-events:none; opacity:.3; background-image:radial-gradient(#a7f5ff .7px,transparent .7px); background-size:42px 42px; z-index:0; }
+.topbar,main { position:relative; }
+.topbar { background:rgba(8,14,27,.9); border-bottom:1px solid var(--accent); box-shadow:0 0 20px rgba(82,231,224,.14); }
+.brand { letter-spacing:.08em; text-transform:uppercase; }
+.brand-mark { color:var(--accent); }
+.btn,.tab-btn,.toolbar select,.toolbar input,.search-wrap input { border-radius:6px; }
+.btn { background:#14233d; border-color:#2e557a; }
+.btn.primary,.tab-btn.active { background:linear-gradient(100deg,#5c3ccf,#913dce); border-color:#bd8bff; }
+.grid { gap:21px 16px; }
+.card { background:linear-gradient(155deg,#1a2d4a,#0c1425); border:1px solid #326084; box-shadow:0 5px 16px rgba(0,0,0,.35); }
+.card:hover { transform:translateY(-6px); border-color:var(--accent); box-shadow:0 10px 26px rgba(0,0,0,.45),0 0 16px rgba(82,231,224,.24); }
+.card .poster { filter:saturate(1.08) contrast(1.04); }
+.card .card-title { color:#e8fbff; }
+.card .card-year { color:#8ebbd0; }
+.detail-info,.modal-card,.filters-panel { background:rgba(10,19,36,.93); border:1px solid #2d6487; }

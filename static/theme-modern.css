@@ -1,0 +1,22 @@
+:root {
+  --bg:#f4f6f8; --panel:#ffffff; --panel2:#edf1f5; --accent:#1769e0;
+  --accent2:#0b4aa2; --text:#16202a; --muted:#647181; --border:#d7dee7;
+  --radius:12px;
+}
+body { background:linear-gradient(135deg,#f8fafc,#e9eef4); }
+.topbar { background:rgba(255,255,255,.94); border-bottom:1px solid #dbe2ea; box-shadow:0 2px 12px rgba(22,32,42,.08); }
+.brand { letter-spacing:-.02em; color:#102a43; }
+.brand-mark { color:var(--accent); }
+.media-counter { color:#66788a; }
+.btn,.tab-btn,.toolbar select,.toolbar input,.search-wrap input { border-radius:8px; }
+.btn { background:#fff; border-color:#cbd5e1; color:#263646; }
+.btn:hover { background:#f1f5f9; }
+.btn.primary,.tab-btn.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+.grid { gap:24px 18px; }
+.card { background:#fff; border:1px solid #dce3eb; box-shadow:0 4px 14px rgba(42,55,70,.10); }
+.card:hover { transform:translateY(-5px); box-shadow:0 12px 24px rgba(42,55,70,.18); }
+.card .poster { background:#e6ebf0; }
+.card .card-title { color:#1e2b38; }
+.card .card-year { color:#718096; }
+.detail-info,.modal-card,.filters-panel { background:rgba(255,255,255,.76); border:1px solid #d7dee7; box-shadow:0 12px 30px rgba(30,43,56,.12); }
+.detail-info h1,.modal-card h2,.modal-card h3 { color:#102a43; }

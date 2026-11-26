@@ -8,6 +8,10 @@ __pycache__/
 logs/
 movieplayer.db
 movie_player.conf.json
+movie_player.pid
+config/*.json
+!config/*.example.json
+data/
 
 # OS
 .DS_Store

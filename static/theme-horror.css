@@ -1,0 +1,20 @@
+:root {
+  --bg:#090909; --panel:#161313; --panel2:#241919; --accent:#b51e2a;
+  --accent2:#6e0e18; --text:#eee3e3; --muted:#a98d91; --border:#48282c;
+  --radius:0;
+}
+body { background:radial-gradient(ellipse at top,#28161a 0,#0d0b0c 48%,#030303 100%); }
+.topbar { background:linear-gradient(180deg,#1c1113,#0b090a); border-bottom:2px solid #8d1722; box-shadow:0 4px 18px rgba(128,0,0,.28); }
+.brand { font-family:Georgia,"Times New Roman",serif; letter-spacing:.08em; text-transform:uppercase; }
+.brand-mark { color:#c3212e; }
+.btn,.tab-btn,.toolbar select,.toolbar input,.search-wrap input { border-radius:0; }
+.btn { background:#211719; border-color:#5b3035; }
+.btn:hover { background:#351c20; }
+.btn.primary,.tab-btn.active { background:#8c1722; border-color:#d34b55; }
+.grid { gap:18px 14px; }
+.card { background:linear-gradient(160deg,#24191a,#0e0c0d); border:1px solid #613238; box-shadow:0 7px 13px rgba(0,0,0,.55); }
+.card:hover { transform:translateY(-5px) rotate(.4deg); border-color:#c54751; box-shadow:0 11px 24px rgba(0,0,0,.72),0 0 14px rgba(163,22,34,.35); }
+.card .poster { filter:contrast(1.1) saturate(.8); }
+.card .card-title { font-family:Georgia,"Times New Roman",serif; color:#f1dfe1; }
+.card .card-year { color:#bc9297; }
+.detail-info,.modal-card,.filters-panel { background:rgba(20,12,14,.72); border:1px solid #633239; }

@@ -1,48 +1,72 @@
 #!/usr/bin/env bash
-# MoviePlayer launcher
-cd "$(dirname "$0")"
-PIDFILE="$(pwd)/movie_player.pid"
+# MoviePlayer launcher for Ubuntu/Linux
+set -u
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE" || exit 1
+PIDFILE="$HERE/data/run/movie_player.pid"
+LOGDIR="$HERE/data/logs"
+LOGFILE="$LOGDIR/movie_player.log"
+
+find_python() {
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+  elif command -v python >/dev/null 2>&1; then
+    command -v python
+  else
+    return 1
+  fi
+}
+
+read_pid() {
+  [ -f "$PIDFILE" ] && tr -d '[:space:]' < "$PIDFILE"
+}
+
+is_running() {
+  [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null
+}
 
 start_app() {
-  if [ -f "$PIDFILE" ]; then
-    OLD=$(cat "$PIDFILE" 2>/dev/null)
-    if [ -n "$OLD" ] && kill -0 "$OLD" 2>/dev/null; then
+  OLD="$(read_pid || true)"
+  if is_running "$OLD"; then
       echo "MoviePlayer already running (PID $OLD)."
       return
-    fi
-    rm -f "$PIDFILE"
   fi
-  echo "Starting MoviePlayer..."
-  if command -v python3 >/dev/null 2>&1; then PY=python3
-  elif command -v python >/dev/null 2>&1; then PY=python
-  else echo "Python not found."; return 1; fi
-  nohup "$PY" movie_player.py >/dev/null 2>&1 &
+  rm -f "$PIDFILE"
+  PY="$(find_python || true)"
+  if [ -z "$PY" ]; then
+    echo "Python 3 is required. Install it with: sudo apt install python3"
+    return 1
+  fi
+  mkdir -p "$LOGDIR"
+  echo "Starting MoviePlayer with $PY..."
+  nohup "$PY" "$HERE/movie_player.py" >>"$LOGFILE" 2>&1 &
+  LAUNCH_PID=$!
   sleep 2
-  if [ -f "$PIDFILE" ]; then
-    PID=$(cat "$PIDFILE")
-    echo "Started (PID $PID). Opening browser..."
+  PID="$(read_pid || true)"
+  if is_running "$PID"; then
+    echo "Started (PID $PID). Log: $LOGFILE"
+  elif is_running "$LAUNCH_PID"; then
+    echo "MoviePlayer is still starting (PID $LAUNCH_PID). Log: $LOGFILE"
   else
-    echo "Started. Opening browser..."
+    echo "MoviePlayer failed to start. Check: $LOGFILE"
+    return 1
   fi
-  # Browser is opened by MoviePlayer itself; do not call xdg-open here
-  # to avoid launching multiple browsers on some Linux setups.
 }
 
 stop_app() {
-  if [ -f "$PIDFILE" ]; then
-    PID=$(cat "$PIDFILE" 2>/dev/null)
-    if [ -n "$PID" ]; then
-      kill "$PID" 2>/dev/null
-      # wait briefly
-      for i in 1 2 3 4 5; do kill -0 "$PID" 2>/dev/null || break; sleep 0.2; done
-      kill -9 "$PID" 2>/dev/null
-    fi
+  PID="$(read_pid || true)"
+  if is_running "$PID"; then
+    kill "$PID" 2>/dev/null || true
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      is_running "$PID" || break
+      sleep 0.2
+    done
+    if is_running "$PID"; then kill -9 "$PID" 2>/dev/null || true; fi
     rm -f "$PIDFILE"
     echo "Stopped (PID $PID)."
   else
-    echo "No PID file. Trying pkill..."
-    pkill -f "movie_player.py" 2>/dev/null
-    echo "Done."
+    rm -f "$PIDFILE"
+    echo "MoviePlayer is not running."
   fi
 }
 

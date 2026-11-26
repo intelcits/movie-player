@@ -29,11 +29,22 @@ except Exception:
     HAS_REQUESTS = False
 
 HERE = Path(__file__).resolve().parent
-CONFIG_FILE = HERE / "movie_player.conf.json"
-CACHE_DIR = HERE / ".cache"
+CONFIG_DIR = HERE / "config"
+DATA_DIR = HERE / "data"
+CACHE_DIR = DATA_DIR / "cache"
+LOG_DIR = DATA_DIR / "logs"
+RUNTIME_DIR = DATA_DIR / "run"
+CONFIG_FILE = CONFIG_DIR / "movie_player.conf.json"
+LEGACY_CONFIG_FILE = HERE / "movie_player.conf.json"
+LEGACY_CACHE_DIR = HERE / ".cache"
+LEGACY_LOG_DIR = HERE / "logs"
+LEGACY_PID_FILE = HERE / "movie_player.pid"
 THUMB_DIR = CACHE_DIR / "thumbs"
 VTT_DIR = CACHE_DIR / "vtt"
 TMDB_CACHE_FILE = CACHE_DIR / "tmdb.json"
+DB_PATH = DATA_DIR / "movieplayer.db"
+IMAGES_DIR = CACHE_DIR / "images"
+PID_FILE = RUNTIME_DIR / "movie_player.pid"
 
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".mpg", ".mpeg", ".wmv",
               ".flv", ".m2ts", ".mts", ".webm", ".ogv", ".ts", ".vob"}
@@ -63,11 +74,67 @@ DEFAULT_CONFIG = {
 }
 
 
+def migrate_legacy_layout():
+    """Move the old root-level runtime layout into config/ and data/ safely."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    if not CONFIG_FILE.exists() and LEGACY_CONFIG_FILE.exists():
+        try:
+            shutil.copy2(LEGACY_CONFIG_FILE, CONFIG_FILE)
+        except OSError:
+            pass
+    if LEGACY_CACHE_DIR.exists() and not CACHE_DIR.exists():
+        try:
+            shutil.move(str(LEGACY_CACHE_DIR), str(CACHE_DIR))
+        except OSError:
+            pass
+    if LEGACY_LOG_DIR.exists() and not LOG_DIR.exists():
+        try:
+            shutil.move(str(LEGACY_LOG_DIR), str(LOG_DIR))
+        except OSError:
+            pass
+    if LEGACY_PID_FILE.exists() and not PID_FILE.exists():
+        try:
+            shutil.move(str(LEGACY_PID_FILE), str(PID_FILE))
+        except OSError:
+            pass
+    # Older V2 builds kept the SQLite file inside the cache directory.
+    # Promote a populated database when the new data root is empty or absent.
+    legacy_db = CACHE_DIR / "movieplayer.db"
+    try:
+        def has_movies(path):
+            if not path.exists():
+                return False
+            conn = sqlite3.connect(str(path), timeout=5)
+            try:
+                return conn.execute("SELECT COUNT(*) FROM movies").fetchone()[0] > 0
+            finally:
+                conn.close()
+        if has_movies(legacy_db) and not has_movies(DB_PATH):
+            if DB_PATH.exists():
+                backup = DATA_DIR / "movieplayer.db.empty-before-migration"
+                if not backup.exists():
+                    shutil.move(str(DB_PATH), str(backup))
+                else:
+                    DB_PATH.unlink()
+            shutil.move(str(legacy_db), str(DB_PATH))
+    except (OSError, sqlite3.Error):
+        # Startup must remain usable even if a legacy file is locked or malformed.
+        pass
+
+
 def load_config():
     cfg = dict(DEFAULT_CONFIG)
     if CONFIG_FILE.exists():
         try:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            cfg.update(data)
+        except Exception:
+            pass
+    elif LEGACY_CONFIG_FILE.exists():
+        try:
+            data = json.loads(LEGACY_CONFIG_FILE.read_text(encoding="utf-8"))
             cfg.update(data)
         except Exception:
             pass
@@ -85,7 +152,11 @@ def load_config():
     for k in ("movie_dirs", "series_dirs"):
         cfg.setdefault(k, [])
     cfg.setdefault("tmdb_session_id", "")
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
     VTT_DIR.mkdir(parents=True, exist_ok=True)
     return cfg
@@ -95,9 +166,8 @@ def save_config(cfg):
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+migrate_legacy_layout()
 CFG = load_config()
-DB_PATH = CACHE_DIR / "movieplayer.db"
-IMAGES_DIR = CACHE_DIR / "images"
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -204,9 +274,16 @@ def init_db():
             name TEXT,
             url TEXT UNIQUE,
             description TEXT,
+            category TEXT,
+            alternates TEXT,
+            rank TEXT,
             fetched_at REAL
         )
         """)
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(streaming_sites)").fetchall()}
+        for col, definition in (("category", "TEXT"), ("alternates", "TEXT"), ("rank", "TEXT")):
+            if col not in existing_cols:
+                conn.execute(f"ALTER TABLE streaming_sites ADD COLUMN {col} {definition}")
         # collection-level art
         conn.execute("""
         CREATE TABLE IF NOT EXISTS collections (
@@ -224,7 +301,33 @@ def init_db():
         conn.close()
 
 
+def migrate_legacy_cache_paths():
+    """Rewrite cache paths stored by the pre-data-directory layout."""
+    legacy_prefixes = (
+        str(LEGACY_CACHE_DIR),
+        str(HERE / "cache"),
+    )
+    new_prefix = str(CACHE_DIR)
+    conn = db_conn()
+    try:
+        for table in ("movies", "collections"):
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            for column in ("poster_local", "backdrop_local"):
+                if column not in columns:
+                    continue
+                for legacy_prefix in legacy_prefixes:
+                    conn.execute(
+                        f"UPDATE {table} SET {column}=REPLACE({column}, ?, ?) "
+                        f"WHERE {column} IS NOT NULL AND instr({column}, ?) > 0",
+                        (legacy_prefix, new_prefix, legacy_prefix),
+                    )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 init_db()
+migrate_legacy_cache_paths()
 
 # ---------- TMDB cache ----------
 _tmdb_cache = {}
@@ -1705,11 +1808,79 @@ def list_drives():
     return out
 
 
+def parse_fmhy_streaming_sites(text):
+    """Parse only the Streaming Sites section, preserving each Markdown row."""
+    metadata_labels = {"discord", "telegram", "status", "mirrors", "invite", "subreddit", "github",
+                       "note", "4k note", "4k guide", "available countries", "clones", "extension",
+                       "grading page"}
+    metadata_hosts = ("discord.", "discord.com", "telegram.", "t.me/", "rentry.", "github.com/",
+                      "reddit.com/", "fmhy-grading.")
+    sites = []
+    in_section = False
+    category = "Streaming"
+    for line in text.splitlines():
+        line = line.strip()
+        if line == "# ► Streaming Sites":
+            in_section = True
+            continue
+        if in_section and line.startswith("# "):
+            break
+        if not in_section:
+            continue
+        if line.startswith("## "):
+            category = re.sub(r"^##\s*[▷►]\s*", "", line).strip() or "Streaming"
+            continue
+        if category.lower() == "stream lounges":
+            continue
+        if not line.startswith("* ") or line.startswith("* **Note"):
+            continue
+        row = line[2:].strip()
+        rank_match = re.match(r"([🌟⭐🌐]+)\s*", row)
+        rank = rank_match.group(1) if rank_match else ""
+        if rank:
+            row = row[rank_match.end():]
+        row_parts = re.split(r"\s+-\s+", row, maxsplit=1)
+        link_part = row_parts[0]
+        description = row_parts[1].strip() if len(row_parts) == 2 else ""
+        links = re.findall(r"\[([^\]]+)\]\((https?://[^)]+)\)", link_part)
+        if not links:
+            continue
+        usable = []
+        for label, url in links:
+            label = re.sub(r"[*_]+", "", label).strip()
+            low_label = label.lower()
+            low_url = url.lower()
+            if low_label in metadata_labels or any(host in low_url for host in metadata_hosts):
+                continue
+            usable.append({"label": label, "url": url})
+        if not usable:
+            continue
+        joined_labels = " ".join(link["label"] for link in usable).lower()
+        if any(term in joined_labels for term in ("twitch", "youtube", "channel", "multireddit", "random streams")):
+            continue
+        # The first link is the named site; subsequent links stay grouped as mirrors/alternates.
+        main = usable[0]
+        clean_description = description
+        def clean_description_link(match):
+            label = re.sub(r"[*_]+", "", match.group(1)).strip()
+            url = match.group(2).lower()
+            if label.lower() in metadata_labels or any(host in url for host in metadata_hosts):
+                return ""
+            return label
+        clean_description = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", clean_description_link, clean_description)
+        clean_description = re.sub(r"\*+", "", clean_description)
+        clean_description = re.sub(r"\s*/\s*(?=/|$)", " ", clean_description)
+        clean_description = re.sub(r"\s{2,}", " ", clean_description).strip(" /")
+        sites.append({"name": main["label"], "url": main["url"], "description": clean_description,
+                      "category": category, "alternates": usable[1:], "rank": rank})
+    return sites
+
+
 def fetch_streaming_sites(force=False):
     conn = db_conn()
     try:
-        rows = conn.execute("SELECT fetched_at FROM streaming_sites LIMIT 1").fetchone()
-        if rows and not force and (time.time() - (rows["fetched_at"] or 0)) < 86400:
+        rows = conn.execute("SELECT MAX(fetched_at) AS fetched_at, COUNT(*) AS total, SUM(category IS NULL) AS legacy FROM streaming_sites").fetchone()
+        if rows and not force and not rows["legacy"] and (time.time() - (rows["fetched_at"] or 0)) < 86400:
             # already cached
             pass
         else:
@@ -1727,33 +1898,16 @@ def fetch_streaming_sites(force=False):
                     text = r.text if (r and r.status_code == 200) else ""
                 except Exception:
                     text = ""
-            # parse markdown links [name](url)
-            import re as _re
-            sites = []
-            seen = set()
-            for m in _re.finditer(r"\[([^\]]+)\]\((https?://[^)]+)\)", text):
-                name = m.group(1).strip()
-                u = m.group(2).strip()
-                if not name or not u:
-                    continue
-                low = u.lower()
-                if "github.com" in low or "fmhy" in low:
-                    continue
-                if ".onion" in low or "rentry.co" in low or "rentry.org" in low:
-                    continue
-                if low.startswith("http://") and "localhost" not in low:
-                    # keep https preferred but allow http
-                    pass
-                if u in seen:
-                    continue
-                seen.add(u)
-                sites.append((name, u))
+            sites = parse_fmhy_streaming_sites(text)
             # store
             conn.execute("DELETE FROM streaming_sites")
             now = time.time()
-            for name, u in sites:
-                conn.execute("INSERT OR IGNORE INTO streaming_sites (name,url,description,fetched_at) VALUES (?,?,?,?)",
-                             (name, u, None, now))
+            for site in sites:
+                conn.execute("""INSERT OR IGNORE INTO streaming_sites
+                    (name,url,description,category,alternates,rank,fetched_at)
+                    VALUES (?,?,?,?,?,?,?)""",
+                    (site["name"], site["url"], site["description"], site["category"],
+                     json.dumps(site["alternates"], ensure_ascii=False), site["rank"], now))
             conn.commit()
     finally:
         conn.close()
@@ -1763,10 +1917,39 @@ def get_streaming_sites():
     fetch_streaming_sites()
     conn = db_conn()
     try:
-        rows = conn.execute("SELECT name,url,description FROM streaming_sites ORDER BY name").fetchall()
-        return [dict(r) for r in rows]
+        rows = conn.execute("SELECT name,url,description,category,alternates,rank FROM streaming_sites ORDER BY id").fetchall()
+        sites = []
+        for row in rows:
+            site = dict(row)
+            try:
+                site["alternates"] = json.loads(site.get("alternates") or "[]")
+            except Exception:
+                site["alternates"] = []
+            sites.append(site)
+        return sites
     finally:
         conn.close()
+
+
+def get_custom_streaming_sites():
+    sites = CFG.get("custom_streaming_sites", []) or []
+    return [s for s in sites if isinstance(s, dict) and s.get("name") and s.get("url")]
+
+
+def add_custom_streaming_site(name, url):
+    sites = get_custom_streaming_sites()
+    if not any(s["url"].rstrip("/").lower() == url.rstrip("/").lower() for s in sites):
+        sites.append({"name": name.strip(), "url": url.strip()})
+        CFG["custom_streaming_sites"] = sites
+        save_config(CFG)
+    return sites
+
+
+def remove_custom_streaming_site(url):
+    sites = [s for s in get_custom_streaming_sites() if s["url"].rstrip("/").lower() != url.rstrip("/").lower()]
+    CFG["custom_streaming_sites"] = sites
+    save_config(CFG)
+    return sites
 
 
 def get_favorites():
@@ -2393,7 +2576,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json({"movies": mc, "series": sc})
             return
         if path == "/api/streaming/sites":
+            force = (qs.get("refresh", ["0"])[0] or "0") == "1"
+            if force:
+                fetch_streaming_sites(force=True)
             sites = get_streaming_sites()
+            self._json({"sites": sites, "count": len(sites)})
+            return
+        if path == "/api/streaming/custom-sites":
+            sites = get_custom_streaming_sites()
             self._json({"sites": sites, "count": len(sites)})
             return
         if path == "/api/streaming/favorites":
@@ -2415,7 +2605,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     results["tv"] = r2.json().get("results", [])[:10]
                 except Exception:
                     pass
-            sites = get_streaming_sites()
+            sites = get_streaming_sites() + get_custom_streaming_sites()
             # build a multi-site search URL via duckduckgo (keep short to avoid query length limits)
             site_filter = " OR ".join(f"site:{urllib.parse.urlparse(s['url']).netloc}" for s in sites[:6])
             ddg = "https://duckduckgo.com/?q=" + urllib.parse.quote(f"{q} ({site_filter})")
@@ -2752,6 +2942,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
             remove_favorite(data.get("tmdb_id"), data.get("media_type", "movie"))
             self._json({"ok": True})
             return
+        if path == "/api/streaming/custom-sites":
+            action_url = str(data.get("url") or "").strip()
+            if self.command == "POST":
+                if data.get("action") == "remove":
+                    if not action_url:
+                        self._json({"error": "url is required"}, 400)
+                        return
+                    sites = remove_custom_streaming_site(action_url)
+                    self._json({"ok": True, "sites": sites})
+                    return
+                name = str(data.get("name") or "").strip()
+                if not name or not re.match(r"^https?://", action_url, re.I):
+                    self._json({"error": "name and http(s) url are required"}, 400)
+                    return
+                sites = add_custom_streaming_site(name, action_url)
+                self._json({"ok": True, "sites": sites})
+                return
         if path == "/api/shutdown":
             do_stop()
             SHUTDOWN_REQUESTED = True
@@ -2837,9 +3044,6 @@ def open_browser(url):
         webbrowser.open(url)
     except Exception:
         pass
-
-
-PID_FILE = HERE / "movie_player.pid"
 
 
 def write_pid_file():
