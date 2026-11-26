@@ -82,7 +82,7 @@ Notes:
 - Controls hide automatically when playback stops or finishes.
 - Movie detail view uses the backdrop art as a visible background.
 - Choose from 4 UI themes (Default, Kodi, Plex, Media Center) in Settings.
-- "✎ Edit" modal: search TMDB by title or `title (year)`; click a result to apply its full metadata and art. "Fetch & Apply" accepts a TMDB URL or numeric ID (a `?language=es` URL also fetches localized metadata). "Save name" only renames; "Save & Close" refreshes the detail view. Google Images and direct image URLs are also supported.
+- "✎ Edit" modal: search TMDB by title or `title (year)`; TMDB search returns both movies and TV series in every category, and clicking a result applies the matching details (movie or TV) plus art. "Fetch & Apply" accepts a TMDB URL or numeric ID (a `?language=es` URL also fetches localized metadata; a `/tv/` URL applies TV details). "Save name" only renames (movies via `/api/movie/rename`, series via `/api/series/rename`); "Save & Close" refreshes the detail view. Series Edit applies art and metadata to all episodes of the series. Google Images and direct image URLs are also supported.
 - Sort movies by title, year, or recently added.
 - Streaming: Favorites/Wishlist (add/remove), click to search. TMDB Watchlist shown if session ID configured.
 - Streaming: embedded player opens in a new tab.

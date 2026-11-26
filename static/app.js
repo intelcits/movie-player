@@ -442,12 +442,15 @@ function parseSearchQuery(raw) {
 
 function parseTmdbRef(input) {
   const raw = (input || "").trim();
-  if (!raw) return { id: null, language: null };
+  if (!raw) return { id: null, language: null, mediaType: null };
   let language = null;
   const lm = raw.match(/[?&]language=([A-Za-z-]+)/);
   if (lm) language = lm[1];
+  let mediaType = null;
+  if (/(?:themoviedb\.org|\/)\/tv\//i.test(raw)) mediaType = "tv";
+  else if (/(?:themoviedb\.org|\/)\/movie\//i.test(raw)) mediaType = "movie";
   const m = raw.match(/(\d+)/);
-  return { id: m ? parseInt(m[1], 10) : null, language };
+  return { id: m ? parseInt(m[1], 10) : null, language, mediaType };
 }
 
 function refreshOpenDetail() {
@@ -460,10 +463,10 @@ function refreshOpenDetail() {
   return Promise.resolve();
 }
 
-async function applyTmdbToMovie(id, language) {
+async function applyTmdbToMovie(id, language, mediaType) {
   if (!currentMovie || !currentMovie.path) throw new Error("no movie selected");
   setEditStatus("Applying TMDB metadata…");
-  const body = { path: currentMovie.path, tmdb_id: id, category: currentCategory };
+  const body = { path: currentMovie.path, tmdb_id: id, category: currentCategory, media_type: mediaType || "movie" };
   if (language) body.language = language;
   const ad = await api("/api/movie/apply_tmdb", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
   if (!ad || ad.error) throw new Error((ad && ad.error) || "TMDB lookup failed");
@@ -475,8 +478,9 @@ async function applyTmdbToMovie(id, language) {
   return currentMovie;
 }
 
-async function applyTmdbToCollection(id, language) {
-  const qs = `?id=${encodeURIComponent(id)}${language ? "&language=" + encodeURIComponent(language) : ""}`;
+async function applyTmdbToCollection(id, language, mediaType) {
+  const type = mediaType === "tv" ? "tv" : "movie";
+  const qs = `?id=${encodeURIComponent(id)}&type=${type}${language ? "&language=" + encodeURIComponent(language) : ""}`;
   const data = await api(`/api/tmdb/details${qs}`);
   const d = data.details;
   if (!d) throw new Error("TMDB lookup failed");
@@ -491,19 +495,39 @@ async function applyTmdbToCollection(id, language) {
   return d;
 }
 
+async function applyTmdbToSeries(id, language, mediaType) {
+  if (!currentSeries) throw new Error("no series selected");
+  setEditStatus("Applying TMDB metadata…");
+  const body = { collection: currentSeries.key, tmdb_id: id, media_type: mediaType || "tv" };
+  if (language) body.language = language;
+  const ad = await api("/api/series/apply_tmdb", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  if (!ad || ad.error) throw new Error((ad && ad.error) || "TMDB lookup failed");
+  const d = ad.details || {};
+  $("editNameInput").value = d.title || currentSeries.name || "";
+  setEditStatus(`Applied: ${d.title || ""}${d.year ? " (" + d.year + ")" : ""} — art and metadata updated.`);
+  await loadMovies();
+  const updated = (seriesData || []).find((s) => s.key === currentSeries.key);
+  if (updated) openSeries(updated);
+  return ad;
+}
+
 async function openEditModal(target) {
-  editTarget = target === "collection" ? "collection" : "movie";
+  editTarget = (target === "collection" || target === "series") ? target : "movie";
   const isMovie = editTarget === "movie";
+  const isSeries = editTarget === "series";
   $("artModal").classList.remove("hidden");
   $("artResults").innerHTML = "";
   $("artPreview").innerHTML = "";
   $("artTmdbInput").value = "";
-  $("editNameRow").classList.toggle("hidden", !isMovie);
+  $("editNameRow").classList.toggle("hidden", editTarget === "collection");
   $("artFrameBtn").classList.toggle("hidden", !isMovie);
   setEditStatus("");
   if (isMovie && currentMovie) {
     $("editNameInput").value = currentMovie.custom_title || currentMovie.title || currentMovie.name || "";
     $("artQuery").value = currentMovie.title || currentMovie.name || "";
+  } else if (isSeries && currentSeries) {
+    $("editNameInput").value = currentSeries.name || currentSeries.key || "";
+    $("artQuery").value = currentSeries.name || "";
   } else {
     $("editNameInput").value = "";
     $("artQuery").value = currentSeries ? (currentSeries.name || "") : ((currentCollection || "").split(/[\\/]/).pop() || "");
@@ -519,9 +543,24 @@ $("artSaveCloseBtn").onclick = async () => {
   await refreshOpenDetail();
 };
 $("saveNameBtn").onclick = async () => {
-  if (!currentMovie) return;
   const name = ($("editNameInput").value || "").trim();
   if (!name) return;
+  if (editTarget === "series") {
+    if (!currentSeries) return;
+    try {
+      await api("/api/series/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentSeries.key, title: name }) });
+      currentSeries.name = name;
+      $("seriesTitle").textContent = name;
+      setEditStatus("Name saved. TMDB art and metadata unchanged.");
+      await loadMovies();
+      const updated = (seriesData || []).find((s) => s.key === currentSeries.key);
+      if (updated) openSeries(updated);
+    } catch (e) {
+      setEditStatus("Rename failed: " + e.message, true);
+    }
+    return;
+  }
+  if (!currentMovie) return;
   try {
     await api("/api/movie/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ path: currentMovie.path, title: name }) });
     currentMovie.custom_title = name;
@@ -580,9 +619,11 @@ $("artFetchBtn").onclick = async () => {
     setEditStatus("Paste a TMDB URL or numeric ID first.", true);
     return;
   }
+  const mediaType = ref.mediaType || (editTarget === "series" ? "tv" : "movie");
   try {
-    if (editTarget === "collection") await applyTmdbToCollection(ref.id, ref.language);
-    else await applyTmdbToMovie(ref.id, ref.language);
+    if (editTarget === "collection") await applyTmdbToCollection(ref.id, ref.language, mediaType);
+    else if (editTarget === "series") await applyTmdbToSeries(ref.id, ref.language, mediaType);
+    else await applyTmdbToMovie(ref.id, ref.language, mediaType);
   } catch (e) {
     setEditStatus("TMDB lookup failed: " + e.message, true);
   }
@@ -595,10 +636,12 @@ async function doArtSearch() {
     return;
   }
   const parsed = parseSearchQuery(raw);
-  const year = parsed.year || (editTarget === "movie" && currentMovie ? (currentMovie.year || "") : "");
+  let year = parsed.year;
+  if (!year && editTarget === "movie" && currentMovie) year = currentMovie.year || "";
+  if (!year && editTarget === "series" && currentSeries) year = currentSeries.year || "";
   $("artResults").innerHTML = "";
   $("artPreview").innerHTML = "";
-  setEditStatus("Searching TMDB…");
+  setEditStatus("Searching TMDB (movies and series)…");
   let data;
   try {
     data = await api(`/api/tmdb/results?title=${encodeURIComponent(parsed.title)}&year=${encodeURIComponent(year)}`);
@@ -616,15 +659,17 @@ async function doArtSearch() {
   results.forEach((r) => {
     const card = document.createElement("div");
     card.className = "stream-card";
+    const kind = r.media_type === "tv" ? "Series" : "Movie";
     card.innerHTML = `
       ${r.poster ? `<img src="${r.poster}" alt="" />` : ""}
       <div class="t">${escapeHtml(r.title)}</div>
-      <div class="y">${r.year || ""}</div>`;
+      <div class="y">${r.year || ""} · ${kind}</div>`;
     card.style.cursor = "pointer";
     card.onclick = async () => {
       try {
-        if (editTarget === "collection") await applyTmdbToCollection(r.id);
-        else await applyTmdbToMovie(r.id);
+        if (editTarget === "collection") await applyTmdbToCollection(r.id, null, r.media_type);
+        else if (editTarget === "series") await applyTmdbToSeries(r.id, null, r.media_type || "tv");
+        else await applyTmdbToMovie(r.id, null, r.media_type || "movie");
       } catch (e) {
         setEditStatus("Apply failed: " + e.message, true);
       }
@@ -698,17 +743,7 @@ $("seriesChangeArtBtn").onclick = () => {
   if (!currentSeries) return;
   currentCollection = currentSeries.key;
   currentCollectionItems = (currentSeries.seasons || []).flatMap((s) => s.episodes || []);
-  openEditModal("collection");
-};
-
-$("seriesRenameBtn").onclick = async () => {
-  if (!currentSeries) return;
-  const name = prompt("New series name:", currentSeries.name || currentSeries.key);
-  if (!name || !name.trim()) return;
-  await api("/api/series/rename", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ collection: currentSeries.key, title: name.trim() }) });
-  currentSeries.name = name.trim();
-  $("seriesTitle").textContent = name.trim();
-  await loadMovies();
+  openEditModal("series");
 };
 
 function openCollection(title, items) {
