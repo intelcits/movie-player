@@ -74,7 +74,8 @@ function applyTheme(name) {
 }
 
 const FONT_MAP = {
-  system: '"Segoe UI", Roboto, Arial, sans-serif',
+  system: '"Verdana", "Tahoma", sans-serif',
+  standard: '"Verdana", "Tahoma", sans-serif',
   sans: 'Helvetica, Arial, sans-serif',
   serif: 'Georgia, "Times New Roman", serif',
   mono: '"Consolas", "Courier New", monospace',
