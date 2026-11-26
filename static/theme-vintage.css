@@ -1,0 +1,21 @@
+:root {
+  --bg:#171719; --panel:#242326; --panel2:#312f2c; --accent:#d4a24c;
+  --accent2:#9d3030; --text:#f3e7cc; --muted:#b9aa8e; --border:#655b4d;
+  --radius:2px;
+}
+body { background: radial-gradient(circle at 50% -10%, #514538 0, #171719 48%, #0d0d0e 100%); }
+.topbar { background:linear-gradient(180deg,#272526,#171719); border-bottom:3px solid var(--accent); box-shadow:0 4px 0 #6f2020; }
+.brand { font-family:Georgia,"Times New Roman",serif; letter-spacing:.12em; text-transform:uppercase; }
+.brand::first-letter { color:var(--accent); }
+.media-counter { font-family:Georgia,serif; }
+.btn,.tab-btn,.toolbar select,.toolbar input,.search-wrap input { border-radius:2px; box-shadow:inset 0 0 0 1px rgba(255,255,255,.04); }
+.btn { background:#302d29; border-color:#806b4f; }
+.btn.primary,.tab-btn.active { background:var(--accent2); border-color:#d26c4c; }
+.grid { gap:22px 18px; }
+.card { background:linear-gradient(145deg,#3b3731,#201f20); border-color:#8b7657; box-shadow:4px 5px 0 rgba(0,0,0,.38); }
+.card:hover { transform:translateY(-7px) rotate(-.6deg); box-shadow:7px 11px 0 rgba(0,0,0,.42),0 0 0 1px var(--accent); }
+.card .poster { filter:saturate(.82) contrast(1.04); }
+.card .card-title { font-family:Georgia,"Times New Roman",serif; color:#f6e8c9; }
+.card .card-year { color:#d0b986; }
+.detail-info,.modal-card,.filters-panel { background:rgba(31,29,28,.72); border:1px solid #806b4f; }
+h1,h2,h3 { font-family:Georgia,"Times New Roman",serif; }

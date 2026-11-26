@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900">
+  <defs><linearGradient id="dark" x2="0" y2="1"><stop stop-color="#141725"/><stop offset="1" stop-color="#05060d"/></linearGradient><linearGradient id="beam"><stop stop-color="#f8f8ff"/><stop offset="1" stop-color="#8d99b7" stop-opacity="0"/></linearGradient></defs>
+  <rect width="1600" height="900" fill="url(#dark)"/><path d="M230 110L800 450 230 790z" fill="none" stroke="#d8def6" stroke-width="3" opacity=".65"/><path d="M1350 100L800 450 1350 800z" fill="none" stroke="#686f9c" stroke-width="2" opacity=".4"/><path d="M0 160L800 450 0 740z" fill="url(#beam)" opacity=".15"/><path d="M1600 160L800 450 1600 740z" fill="url(#beam)" opacity=".12"/><polygon points="800,355 840,450 800,545 760,450" fill="#edf2ff" opacity=".92"/><text x="800" y="690" fill="#dbe3ff" text-anchor="middle" font-family="Arial,sans-serif" font-size="26" letter-spacing="12">DARK SIDE OF THE SCREEN</text>
+</svg>

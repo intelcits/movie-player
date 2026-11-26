@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900">
+  <defs><radialGradient id="bg"><stop stop-color="#60201c"/><stop offset="1" stop-color="#160d12"/></radialGradient><pattern id="grain" width="34" height="34" patternUnits="userSpaceOnUse"><circle cx="4" cy="8" r="1" fill="#f2c36b" opacity=".16"/><circle cx="23" cy="20" r="1" fill="#fff" opacity=".08"/></pattern></defs>
+  <rect width="1600" height="900" fill="url(#bg)"/><rect width="1600" height="900" fill="url(#grain)"/>
+  <path d="M0 690h1600v210H0z" fill="#0d0b10" opacity=".8"/><path d="M170 0v900M1430 0v900" stroke="#d39a42" stroke-width="4" opacity=".35"/>
+  <circle cx="800" cy="410" r="190" fill="none" stroke="#d39a42" stroke-width="3" opacity=".5"/><text x="800" y="430" fill="#edc06a" text-anchor="middle" font-family="Georgia,serif" font-size="72" letter-spacing="15">PULP</text><text x="800" y="495" fill="#fff1cf" text-anchor="middle" font-family="Arial,sans-serif" font-size="28" letter-spacing="8">REEL COLLECTION</text>
+</svg>

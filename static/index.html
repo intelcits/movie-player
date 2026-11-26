@@ -3,22 +3,51 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MoviePlayer</title>
+<title>MoviePlayer V2</title>
 <link rel="stylesheet" href="/static/style.css">
-<link id="themeCss" rel="stylesheet" href="/static/theme-default.css">
+<link id="themeCss" rel="stylesheet" href="/static/theme-videoclub.css?v=6">
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">🎬 MoviePlayer</div>
-  <span id="mediaCounter" class="media-counter">Movies: 0 · Series: 0</span>
-  <nav class="tabs">
-    <button class="tab-btn active" data-tab="movies">Movies</button>
-    <button class="tab-btn" data-tab="series">Series</button>
-    <button class="tab-btn" data-tab="streaming">Streaming</button>
+  <div class="top-identity">
+    <div class="brand"><span class="brand-mark">▣</span> MoviePlayer V2</div>
+    <span id="mediaCounter" class="media-counter" data-active="movies"><span class="counter-item counter-movies">Movies: 0</span><span class="counter-separator"> · </span><span class="counter-item counter-series">Series: 0</span></span>
+  </div>
+  <nav class="source-console" aria-label="Media source selector" role="radiogroup">
+    <div class="source-switch is-active" data-tab="movies">
+      <div class="channel-label">Movies</div>
+      <span class="pos-text pos-on">ON</span>
+      <label class="toggle-wrapper">
+        <input type="checkbox" name="movies" aria-label="Movies" checked />
+        <span class="hex-nut"><span class="socket"></span></span>
+        <span class="lever"></span>
+      </label>
+      <span class="pos-text pos-off">OFF</span>
+    </div>
+    <div class="source-switch" data-tab="series">
+      <div class="channel-label">Series</div>
+      <span class="pos-text pos-on">ON</span>
+      <label class="toggle-wrapper">
+        <input type="checkbox" name="series" aria-label="Series" />
+        <span class="hex-nut"><span class="socket"></span></span>
+        <span class="lever"></span>
+      </label>
+      <span class="pos-text pos-off">OFF</span>
+    </div>
+    <div class="source-switch" data-tab="streaming">
+      <div class="channel-label">Streaming</div>
+      <span class="pos-text pos-on">ON</span>
+      <label class="toggle-wrapper">
+        <input type="checkbox" name="streaming" aria-label="Streaming" />
+        <span class="hex-nut"><span class="socket"></span></span>
+        <span class="lever"></span>
+      </label>
+      <span class="pos-text pos-off">OFF</span>
+    </div>
   </nav>
   <div class="top-controls">
-    <button id="settingsBtn" class="btn icon" title="Settings"><img src="/static/img/settings.svg" alt="Settings" width="20" height="20" /></button>
-    <button id="serverBtn" class="btn icon" title="Server controls"><img src="/static/img/power.svg" alt="Server" width="20" height="20" /></button>
+    <button id="settingsBtn" class="btn icon utility-switch utility-settings" title="Settings"><img src="/static/img/settings.svg" alt="Settings" width="20" height="20" /></button>
+    <button id="serverBtn" class="btn icon utility-switch utility-power" title="Server controls"><img src="/static/img/power.svg" alt="Server" width="20" height="20" /></button>
   </div>
 </header>
 
@@ -135,11 +164,36 @@
     <div id="streamPlayer" class="stream-player hidden"></div>
     <h3>My Wishlist</h3>
     <div id="wishlistResults" class="stream-results"></div>
-    <h3>TMDB Watchlist</h3>
-    <div id="tmdbWatchlist" class="stream-results"></div>
     <h3>Search Results</h3>
     <div id="streamResults" class="stream-results"></div>
-    <div id="streamSites" class="stream-sites"></div>
+    <h3>TMDB Watchlist</h3>
+    <div id="tmdbWatchlist" class="stream-results"></div>
+    <div class="stream-sites-columns">
+      <section class="stream-sites">
+        <div class="stream-sites-heading">
+          <div>
+            <h3>FMHY Streaming Sites</h3>
+            <p>Lista actualizada desde la wiki de FMHY.</p>
+          </div>
+          <button id="refreshStreamSites" class="btn small">Actualizar</button>
+        </div>
+        <div id="streamSites"></div>
+      </section>
+      <section class="stream-sites stream-custom-sites">
+        <div class="stream-sites-heading">
+          <div>
+            <h3>Mis sitios</h3>
+            <p>Agrega tus propios sitios o mirrors.</p>
+          </div>
+        </div>
+        <form id="customSiteForm" class="custom-site-form">
+          <input id="customSiteName" type="text" placeholder="Nombre, por ejemplo YIFI" required />
+          <input id="customSiteUrl" type="url" placeholder="https://ejemplo.com" required />
+          <button class="btn primary small" type="submit">Agregar</button>
+        </form>
+        <div id="customStreamSites"></div>
+      </section>
+    </div>
   </section>
 </main>
 
@@ -186,10 +240,21 @@
     <label>Skip seconds <input id="sSkip" type="number" /></label>
     <label>Theme
       <select id="sTheme">
+        <option value="videoclub">Retro Reel (Videoclub)</option>
         <option value="default">Default (Dark Red)</option>
         <option value="kodi">Kodi (Blue)</option>
         <option value="plex">Plex (Gold)</option>
         <option value="media">Media Center (Neon)</option>
+        <option value="vintage">Vintage (Metropolis)</option>
+        <option value="modern">Moderno</option>
+        <option value="futuristic">Futurista</option>
+        <option value="horror">Terror</option>
+        <option value="scifi">Ciencia ficción</option>
+        <option value="pulpfiction">Pulp Fiction</option>
+        <option value="starwars">Star Wars</option>
+        <option value="indianajones">Indiana Jones</option>
+        <option value="wwii">WWII</option>
+        <option value="pinkfloyd">Pink Floyd</option>
       </select>
     </label>
     <label><input type="checkbox" id="sKiosk" /> Kiosk mode (fullscreen, no controls)</label>

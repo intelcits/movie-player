@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900">
+  <defs><linearGradient id="paper" x2="0" y2="1"><stop stop-color="#b99457"/><stop offset="1" stop-color="#49321f"/></linearGradient><filter id="rough"><feTurbulence type="fractalNoise" baseFrequency=".06" numOctaves="2" result="n"/><feBlend in="SourceGraphic" in2="n" mode="multiply"/></filter></defs>
+  <rect width="1600" height="900" fill="url(#paper)"/><path d="M40 70C390 210 540 40 820 170s470-90 740 20M0 680c300-120 420 90 720-20s560 120 880-30" fill="none" stroke="#2e1d17" stroke-width="8" opacity=".48"/><path d="M790 80l210 370-240 200-230-360z" fill="none" stroke="#3b2619" stroke-width="8" opacity=".6"/><circle cx="790" cy="390" r="20" fill="#9d302c"/><path d="M790 410v150M770 450h40" stroke="#9d302c" stroke-width="7"/><text x="800" y="790" fill="#2b1b16" text-anchor="middle" font-family="Georgia,serif" font-size="52" letter-spacing="7">ARCHIVE OF ADVENTURE</text>
+</svg>

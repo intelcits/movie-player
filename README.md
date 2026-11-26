@@ -1,4 +1,10 @@
-# MoviePlayer
+# MoviePlayer V2 · Retro Reel
+
+V2 mantiene el reproductor local de V1 y añade una interfaz inspirada en un videoclub de los 80/90. En el tema `Retro Reel`, la biblioteca se muestra en góndolas separadas por género para Movies y Series, con cajas más pequeñas y varias filas cuando hay suficiente contenido.
+
+Además incluye skins de grilla independientes: `Vintage (Metropolis)`, `Moderno`, `Futurista`, `Terror`, `Ciencia ficción`, `Pulp Fiction`, `Star Wars`, `Indiana Jones`, `WWII` y `Pink Floyd`. Los cinco últimos incorporan fondos gráficos locales y tratamiento visual propio. Se seleccionan desde Settings y no alteran la navegación por góndolas del tema de videoclub.
+
+Esta copia es independiente de `movie-player V1`. Su tema activo por defecto es `Retro Reel (Videoclub)` y puede cambiarse desde Settings. Al elegir cualquiera de los temas anteriores se recupera la grilla original de V1.
 
 A smart, easy local movie player with an HTML control panel.
 Uses `ffplay` (playback), `ffprobe` (metadata) and `ffmpeg` (thumbnails, subtitles conversion).

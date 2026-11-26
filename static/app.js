@@ -55,7 +55,13 @@ function showView(name) {
 
 function switchTab(tab) {
   currentTab = tab;
-  document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  $("mediaCounter")?.setAttribute("data-active", tab);
+  document.querySelectorAll(".source-switch").forEach((unit) => {
+    const active = unit.dataset.tab === tab;
+    unit.classList.toggle("is-active", active);
+    const input = unit.querySelector("input");
+    if (input) input.checked = active;
+  });
   if (tab === "streaming") {
     currentCategory = "streaming";
     showView("streaming");
@@ -70,7 +76,9 @@ function switchTab(tab) {
 
 function applyTheme(name) {
   const link = $("themeCss");
-  if (link) link.href = `/static/theme-${name || "default"}.css`;
+  const theme = name || "videoclub";
+  document.body.dataset.theme = theme;
+  if (link) link.href = `/static/theme-${theme}.css${theme === "videoclub" ? "?v=6" : ""}`;
 }
 
 const FONT_MAP = {
@@ -97,8 +105,9 @@ async function loadConfig() {
   $("sSkip").value = cfg.skip_seconds || 10;
   $("sTmdbKey").value = cfg.tmdb_api_key || "";
   $("sTmdbSession").value = cfg.tmdb_session_id || "";
-  $("sTheme").value = cfg.theme || "default";
-  applyTheme(cfg.theme || "default");
+  const selectedTheme = cfg.theme || "videoclub";
+  $("sTheme").value = selectedTheme;
+  applyTheme(selectedTheme);
   $("sKiosk").checked = !!cfg.kiosk_mode;
   $("sFullscreen").checked = cfg.fullscreen !== false;
   $("sFontSize").value = cfg.ui_font_size || 15;
@@ -138,7 +147,7 @@ async function populateLibSelect() {
 async function updateCounter() {
   try {
     const d = await api("/api/counts");
-    $("mediaCounter").textContent = `Movies: ${d.movies} · Series: ${d.series}`;
+    $("mediaCounter").innerHTML = `<span class="counter-item counter-movies">Movies: ${d.movies}</span><span class="counter-separator"> · </span><span class="counter-item counter-series">Series: ${d.series}</span>`;
   } catch (e) {}
 }
 async function loadFilterOptions() {
@@ -254,6 +263,7 @@ function renderGrid() {
       groups.get(k).push(m);
     }
   });
+  const cards = [];
   groups.forEach((items, key) => {
     const card = document.createElement("div");
     card.className = "card";
@@ -274,14 +284,17 @@ function renderGrid() {
       if (isGroup) openCollection(key, items);
       else openDetail(first);
     };
-    grid.appendChild(card);
+    cards.push({ card, item: first });
   });
+  if (document.body.dataset.theme === "videoclub") renderGenreShelves(grid, cards);
+  else cards.forEach(({ card }) => grid.appendChild(card));
 }
 
 function renderSeriesGrid() {
   const grid = $("grid");
   grid.innerHTML = "";
   $("emptyState").classList.toggle("hidden", seriesData.length > 0);
+  const cards = [];
   seriesData.forEach((s) => {
     const card = document.createElement("div");
     card.className = "card";
@@ -293,11 +306,53 @@ function renderSeriesGrid() {
       <div class="card-title">${escapeHtml(s.name || s.key)}</div>
       <div class="card-year">${s.year || ""} · ${seasons} season(s) · ${eps} ep</div>`;
     card.onclick = () => openSeries(s);
-    grid.appendChild(card);
+    cards.push({ card, item: s });
   });
+  if (document.body.dataset.theme === "videoclub") renderGenreShelves(grid, cards);
+  else cards.forEach(({ card }) => grid.appendChild(card));
 }
 
-function escapeHtml(s){ return (s||"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function itemGenres(item) {
+  const genres = Array.isArray(item?.genres) ? item.genres.filter(Boolean) : [];
+  return genres.length ? genres : ["Sin género"];
+}
+
+function appendShelf(container, label, entries) {
+  if (!entries.length) return;
+  const section = document.createElement("section");
+  section.className = "genre-shelf";
+  section.innerHTML = `<div class="shelf-header"><span class="shelf-label">${escapeHtml(label)}</span><span class="shelf-count">${entries.length} títulos</span></div><div class="shelf-row"></div>`;
+  const row = section.querySelector(".shelf-row");
+  entries.forEach(({ card }) => {
+    const clone = card.cloneNode(true);
+    clone.onclick = () => card.click();
+    row.appendChild(clone);
+  });
+  container.appendChild(section);
+}
+
+function renderSingleShelf(container, cards, label) {
+  const isStoreTheme = document.body.dataset.theme === "videoclub";
+  container.classList.toggle("shelf-layout", isStoreTheme);
+  if (isStoreTheme) appendShelf(container, label, cards);
+  else cards.forEach(({ card }) => container.appendChild(card));
+}
+
+function renderGenreShelves(container, cards) {
+  if (!cards.length) return;
+  const shelves = new Map();
+  cards.forEach((entry) => {
+    itemGenres(entry.item).forEach((genre) => {
+      if (!shelves.has(genre)) shelves.set(genre, []);
+      shelves.get(genre).push(entry);
+    });
+  });
+  [...shelves.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, "es"))
+    .forEach(([genre, entries]) => appendShelf(container, genre, entries));
+}
+
+function escapeHtml(s){ return String(s ?? "").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 async function openDetail(m) {
   currentMovie = m;
@@ -691,6 +746,7 @@ function openSeries(s) {
   $("seasonEpisodes").classList.add("hidden");
   const seasonsGrid = $("seriesSeasons");
   seasonsGrid.innerHTML = "";
+  const seasonCards = [];
   (s.seasons || []).forEach((sn) => {
     const card = document.createElement("div");
     card.className = "card";
@@ -701,8 +757,9 @@ function openSeries(s) {
       <div class="card-title">Season ${sn.season}${sn.name ? " - " + escapeHtml(sn.name) : ""}</div>
       <div class="card-year">${(sn.episodes || []).length} episodes</div>`;
     card.onclick = () => openSeason(sn);
-    seasonsGrid.appendChild(card);
+    seasonCards.push({ card, item: sn });
   });
+  renderSingleShelf(seasonsGrid, seasonCards, "Temporadas");
   // change art target collection = series key
   window._seriesArtCollection = s.key;
 }
@@ -713,6 +770,7 @@ function openSeason(sn) {
   const epGrid = $("seasonEpisodes");
   epGrid.classList.remove("hidden");
   epGrid.innerHTML = "";
+  const episodeCards = [];
   (sn.episodes || []).forEach((m) => {
     const card = document.createElement("div");
     card.className = "card";
@@ -723,8 +781,9 @@ function openSeason(sn) {
       <div class="card-title">E${String(m.episode || "").padStart(2,"0")} ${escapeHtml(epTitle)}</div>
       <div class="card-year">${m.year || ""}</div>`;
     card.onclick = () => openDetail(m);
-    epGrid.appendChild(card);
+    episodeCards.push({ card, item: m });
   });
+  renderSingleShelf(epGrid, episodeCards, "Episodios");
 }
 
 $("seriesBackBtn").onclick = () => {
@@ -752,6 +811,7 @@ function openCollection(title, items) {
   $("collTitle").textContent = title;
   const grid = $("collGrid");
   grid.innerHTML = "";
+  const collectionCards = [];
   items.forEach((m) => {
     const card = document.createElement("div");
     card.className = "card";
@@ -761,8 +821,9 @@ function openCollection(title, items) {
       <div class="card-title">${escapeHtml(m.title || m.name)}${m.year ? " (" + escapeHtml(m.year) + ")" : ""}</div>
       <div class="card-year">${m.file_info || ""}</div>`;
     card.onclick = () => openDetail(m);
-    grid.appendChild(card);
+    collectionCards.push({ card, item: m });
   });
+  renderSingleShelf(grid, collectionCards, title);
 }
 
 $("collChangeArtBtn").onclick = () => openEditModal("collection");
@@ -867,12 +928,16 @@ $("pbSubToggle").onclick = async () => {
 };
 
 // settings
+function setUtilityState(id, active) {
+  $(id)?.classList.toggle("is-pressed", !!active);
+}
 $("settingsBtn").onclick = async () => {
   $("settingsModal").classList.remove("hidden");
+  setUtilityState("settingsBtn", true);
   await refreshLibLists();
   browseTo("");
 };
-$("sClose").onclick = () => $("settingsModal").classList.add("hidden");
+$("sClose").onclick = () => { $("settingsModal").classList.add("hidden"); setUtilityState("settingsBtn", false); };
 $("rescanBtn").onclick = async () => {
   const btn = $("rescanBtn");
   const orig = btn.textContent;
@@ -891,8 +956,8 @@ $("rescanBtn").onclick = async () => {
   }
 };
 
-$("serverBtn").onclick = () => $("serverModal").classList.remove("hidden");
-$("serverModalClose").onclick = () => $("serverModal").classList.add("hidden");
+$("serverBtn").onclick = () => { $("serverModal").classList.remove("hidden"); setUtilityState("serverBtn", true); };
+$("serverModalClose").onclick = () => { $("serverModal").classList.add("hidden"); setUtilityState("serverBtn", false); };
 $("serverCloseBrowserBtn").onclick = () => window.close();
 $("serverRestartBtn").onclick = async () => {
   if (!confirm("Restart the MoviePlayer server?")) return;
@@ -924,6 +989,8 @@ $("sSave").onclick = async () => {
   };
   await api("/api/config", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(cfg) });
   try { localStorage.setItem("mp_sub_size", String(cfg.sub_size)); localStorage.setItem("mp_sub_color", cfg.sub_color); } catch(e){}
+  applyTheme(cfg.theme);
+  if (currentCategory === "movie" || currentCategory === "series") await loadMovies();
   applyUiPrefs();
   $("settingsModal").classList.add("hidden");
 };
@@ -1094,9 +1161,13 @@ toggleSearchClear();
 function toggleSearchClear() { $("searchClear").classList.toggle("hidden", !($("searchBox").value || "").trim()); }
 toggleSearchClear();
 
-// tabs
-document.querySelectorAll(".tab-btn").forEach((b) => {
-  b.addEventListener("click", () => switchTab(b.dataset.tab));
+// source console: one physical switch can be ON at a time
+document.querySelectorAll(".source-switch input").forEach((input) => {
+  input.addEventListener("change", () => {
+    const unit = input.closest(".source-switch");
+    if (!unit) return;
+    switchTab(unit.dataset.tab);
+  });
 });
 
 // scan
@@ -1157,16 +1228,90 @@ async function loadWishlist() {
   } catch (e) {}
 }
 
+function renderSiteList(container, sites, removable) {
+  container.innerHTML = "";
+  if (!sites.length) {
+    container.innerHTML = `<div class="empty">${removable ? "Todavía no agregaste sitios." : "No se pudo cargar la lista de FMHY."}</div>`;
+    return;
+  }
+  let currentCategory = null;
+  sites.forEach((site) => {
+    if (!removable && site.category && site.category !== currentCategory) {
+      currentCategory = site.category;
+      const heading = document.createElement("h4");
+      heading.className = "stream-site-category";
+      heading.textContent = currentCategory;
+      container.appendChild(heading);
+    }
+    const row = document.createElement("div");
+    row.className = "site";
+    const info = document.createElement("div");
+    info.className = "site-info";
+    if (site.rank) {
+      const rank = document.createElement("span");
+      rank.className = "site-rank";
+      rank.textContent = site.rank;
+      info.appendChild(rank);
+    }
+    const link = document.createElement("a");
+    link.href = site.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = site.name || site.url;
+    link.style.fontWeight = "700";
+    info.appendChild(link);
+    (site.alternates || []).forEach((alternate, index) => {
+      const separator = document.createTextNode(index === 0 ? " · " : ", ");
+      const alt = document.createElement("a");
+      alt.href = alternate.url;
+      alt.target = "_blank";
+      alt.rel = "noopener noreferrer";
+      alt.textContent = alternate.label || String(index + 2);
+      info.append(separator, alt);
+    });
+    const url = document.createElement("div");
+    url.className = "site-url";
+    url.textContent = site.description || (removable ? site.url : "");
+    if (url.textContent) info.appendChild(url);
+    row.appendChild(info);
+    if (removable) {
+      const remove = document.createElement("button");
+      remove.className = "btn small site-remove";
+      remove.textContent = "Quitar";
+      remove.onclick = async () => {
+        await api("/api/streaming/custom-sites", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ action:"remove", url:site.url }) });
+        loadStreamingSites();
+      };
+      row.appendChild(remove);
+    }
+    container.appendChild(row);
+  });
+}
+
+async function loadStreamingSites(refresh = false) {
+  try {
+    const query = refresh ? "?refresh=1" : "";
+    const official = await api(`/api/streaming/sites${query}`);
+    renderSiteList($("streamSites"), official.sites || [], false);
+  } catch (e) {
+    renderSiteList($("streamSites"), [], false);
+  }
+  try {
+    const custom = await api("/api/streaming/custom-sites");
+    renderSiteList($("customStreamSites"), custom.sites || [], true);
+  } catch (e) {
+    renderSiteList($("customStreamSites"), [], true);
+  }
+}
+
 async function doStreamSearch() {
   const q = ($("streamQuery").value || "").trim();
   if (!q) return;
   const progress = $("streamProgress");
   const results = $("streamResults");
-  const sitesDiv = $("streamSites");
   const player = $("streamPlayer");
   progress.classList.add("active");
   results.innerHTML = "";
-  sitesDiv.innerHTML = "";
   player.classList.add("hidden");
   player.innerHTML = "";
   let data;
@@ -1199,13 +1344,7 @@ async function doStreamSearch() {
     });
     results.appendChild(card);
   });
-  sitesDiv.innerHTML = "";
-  const wiki = document.createElement("a");
-  wiki.className = "ddg-link";
-  wiki.href = "https://github.com/fmhy/FMHY/wiki/Streaming";
-  wiki.target = "_blank";
-  wiki.textContent = "Browse all streaming sites (FMHY wiki) →";
-  sitesDiv.appendChild(wiki);
+  loadStreamingSites();
 }
 
 function openStreamPlayer(it, title, year) {
@@ -1228,4 +1367,15 @@ function openStreamPlayer(it, title, year) {
 }
 $("streamSearchBtn").onclick = doStreamSearch;
 $("streamQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") doStreamSearch(); });
-api("/api/streaming/sites").catch(()=>{});
+$("refreshStreamSites").onclick = () => loadStreamingSites(true);
+$("customSiteForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const name = $("customSiteName").value.trim();
+  const url = $("customSiteUrl").value.trim();
+  if (!name || !/^https?:\/\//i.test(url)) return;
+  await api("/api/streaming/custom-sites", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ name, url }) });
+  $("customSiteName").value = "";
+  $("customSiteUrl").value = "";
+  loadStreamingSites();
+});
+loadStreamingSites();
