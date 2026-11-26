@@ -17,13 +17,8 @@
     <button class="tab-btn" data-tab="streaming">Streaming</button>
   </nav>
   <div class="top-controls">
-    <select id="serverCombo" class="btn icon" title="Server controls">
-      <option value="">⏻</option>
-      <option value="closeBrowser">Close Browser</option>
-      <option value="restartServer">Restart Server</option>
-      <option value="stopServer">Stop Server &amp; Close Browser</option>
-    </select>
-    <button id="settingsBtn" class="btn icon">⚙</button>
+    <button id="serverBtn" class="btn icon" title="Server controls"><img src="/static/img/power.svg" alt="Server" width="20" height="20" /></button>
+    <button id="settingsBtn" class="btn icon" title="Settings"><img src="/static/img/settings.svg" alt="Settings" width="20" height="20" /></button>
   </div>
 </header>
 
@@ -235,6 +230,19 @@
       <button id="sSave" class="btn primary">Save</button>
       <button id="rescanBtn" class="btn">Rescan all metadata & art</button>
       <button id="sClose" class="btn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Server controls modal -->
+<div id="serverModal" class="modal hidden">
+  <div class="modal-card">
+    <h2>Server controls</h2>
+    <div class="modal-actions" style="flex-direction:column;align-items:stretch;">
+      <button id="serverCloseBrowserBtn" class="btn">Close Browser</button>
+      <button id="serverRestartBtn" class="btn">Restart Server</button>
+      <button id="serverStopBtn" class="btn danger">Stop Server &amp; Close Browser</button>
+      <button id="serverModalClose" class="btn">Close</button>
     </div>
   </div>
 </div>

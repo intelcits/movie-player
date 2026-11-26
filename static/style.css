@@ -174,3 +174,5 @@ main { position:relative; z-index:1; }
 .stream-player { margin:16px 0; background:#000; border-radius:8px; overflow:hidden; }
 .stream-player iframe { width:100%; height:480px; border:0; display:block; }
 .stream-player .player-bar-row { display:flex; gap:8px; padding:8px; background:var(--panel); }
+
+.btn.danger { background:#7a1f1f; color:#fff; border-color:#a33; }
