@@ -2778,7 +2778,7 @@ def open_browser(url):
             if os.path.isfile(p):
                 candidates.append(p)
     else:
-        for name in ("google-chrome", "chromium-browser", "chromium", "microsoft-edge"):
+        for name in ("google-chrome", "chromium-browser", "chromium", "microsoft-edge", "brave-browser", "brave"):
             w = shutil.which(name)
             if w:
                 candidates.append(w)

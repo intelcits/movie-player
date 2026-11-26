@@ -24,9 +24,8 @@ start_app() {
   else
     echo "Started. Opening browser..."
   fi
-  if command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "http://127.0.0.1:8765/" >/dev/null 2>&1 &
-  fi
+  # Browser is opened by MoviePlayer itself; do not call xdg-open here
+  # to avoid launching multiple browsers on some Linux setups.
 }
 
 stop_app() {
