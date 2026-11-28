@@ -161,6 +161,12 @@ def load_config():
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
     VTT_DIR.mkdir(parents=True, exist_ok=True)
+    # persist defaults on first run
+    if not CONFIG_FILE.exists():
+        try:
+            save_config(cfg)
+        except Exception:
+            pass
     return cfg
 
 
