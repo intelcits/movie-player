@@ -234,80 +234,103 @@
 <div id="settingsModal" class="modal hidden">
   <div class="modal-card">
     <h2>Settings</h2>
-    <label>TMDB API Key
-      <input id="sTmdbKey" type="text" placeholder="paste your TMDB v3 API key" />
-    </label>
-    <label>TMDB Session ID (optional, for watchlist)
-      <input id="sTmdbSession" type="text" placeholder="paste your TMDB session id" />
-    </label>
-    <label>Host <input id="sHost" type="text" /></label>
-    <label>Port <input id="sPort" type="number" /></label>
-    <label>Skip seconds <input id="sSkip" type="number" /></label>
-    <label>Theme
-      <select id="sTheme">
-        <option value="videoclub">Retro Reel (Videoclub)</option>
-        <option value="default">Default (Dark Red)</option>
-        <option value="kodi">Kodi (Blue)</option>
-        <option value="plex">Plex (Gold)</option>
-        <option value="media">Media Center (Neon)</option>
-        <option value="vintage">Vintage (Metropolis)</option>
-        <option value="modern">Moderno</option>
-        <option value="futuristic">Futurista</option>
-        <option value="horror">Terror</option>
-        <option value="scifi">Ciencia ficción</option>
-        <option value="pulpfiction">Pulp Fiction</option>
-        <option value="starwars">Star Wars</option>
-        <option value="indianajones">Indiana Jones</option>
-        <option value="wwii">WWII</option>
-        <option value="pinkfloyd">Pink Floyd</option>
-      </select>
-    </label>
-    <label><input type="checkbox" id="sKiosk" /> Kiosk mode (fullscreen, no controls)</label>
-    <label><input type="checkbox" id="sFullscreen" checked /> Full screen mode</label>
-    <label>Music folder
-      <input id="sMusicDir" type="text" placeholder="Path to folder with mp3 files" />
-    </label>
-    <label>Screensaver timeout (min)
-      <input id="sScreensaver" type="number" min="1" max="60" value="5" />
-    </label>
-    <label>Interface font size (px)
-      <input id="sFontSize" type="number" min="12" max="24" value="15" />
-    </label>
-    <label>Interface font
-      <select id="sFontFamily">
-        <option value="system">System (default)</option>
-        <option value="standard">Verdana / Tahoma (recommended)</option>
-        <option value="sans">Sans-serif</option>
-        <option value="serif">Serif</option>
-        <option value="mono">Monospace</option>
-      </select>
-    </label>
-    <fieldset class="subtitle-settings">
-      <legend>Subtítulo: color y tamaño</legend>
-      <div class="subtitle-settings-row">
-        <label for="sSubSize">Tamaño
-          <input id="sSubSize" type="number" min="12" max="60" value="28" />
-          <span>px</span>
-        </label>
-        <label for="sSubColor">Color
-          <input id="sSubColor" type="color" value="#ffffff" />
-        </label>
+    <div class="settings-section">
+      <h3>TMDB</h3>
+      <label>TMDB API Key
+        <input id="sTmdbKey" type="text" placeholder="paste your TMDB v3 API key" />
+      </label>
+      <label>TMDB Session ID (optional, for watchlist)
+        <input id="sTmdbSession" type="text" placeholder="paste your TMDB session id" />
+      </label>
+    </div>
+    <div class="settings-section">
+      <h3>Server</h3>
+      <label>Host <input id="sHost" type="text" /></label>
+      <label>Port <input id="sPort" type="number" /></label>
+      <label>Skip seconds <input id="sSkip" type="number" /></label>
+    </div>
+    <div class="settings-section">
+      <h3>Appearance</h3>
+      <label>Theme
+        <select id="sTheme">
+          <option value="videoclub">Retro Reel (Videoclub)</option>
+          <option value="default">Default (Dark Red)</option>
+          <option value="kodi">Kodi (Blue)</option>
+          <option value="plex">Plex (Gold)</option>
+          <option value="media">Media Center (Neon)</option>
+          <option value="vintage">Vintage (Metropolis)</option>
+          <option value="modern">Moderno</option>
+          <option value="futuristic">Futurista</option>
+          <option value="horror">Terror</option>
+          <option value="scifi">Ciencia ficción</option>
+          <option value="pulpfiction">Pulp Fiction</option>
+          <option value="starwars">Star Wars</option>
+          <option value="indianajones">Indiana Jones</option>
+          <option value="wwii">WWII</option>
+          <option value="pinkfloyd">Pink Floyd</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="sKiosk" /> Kiosk mode (fullscreen, no controls)</label>
+      <label><input type="checkbox" id="sFullscreen" checked /> Full screen mode</label>
+      <label>Interface font size (px)
+        <input id="sFontSize" type="number" min="12" max="24" value="15" />
+      </label>
+      <label>Interface font
+        <select id="sFontFamily">
+          <option value="system">System (default)</option>
+          <option value="standard">Verdana / Tahoma (recommended)</option>
+          <option value="sans">Sans-serif</option>
+          <option value="serif">Serif</option>
+          <option value="mono">Monospace</option>
+        </select>
+      </label>
+    </div>
+    <div class="settings-section">
+      <h3>Subtitles</h3>
+      <fieldset class="subtitle-settings">
+        <legend>Subtítulo: color y tamaño</legend>
+        <div class="subtitle-settings-row">
+          <label for="sSubSize">Tamaño
+            <input id="sSubSize" type="number" min="12" max="60" value="28" />
+            <span>px</span>
+          </label>
+          <label for="sSubColor">Color
+            <input id="sSubColor" type="color" value="#ffffff" />
+          </label>
+        </div>
+      </fieldset>
+    </div>
+    <div class="settings-section">
+      <h3>Music</h3>
+      <label>Music folder
+        <input id="sMusicDir" type="text" placeholder="Path to folder with mp3 files" />
+      </label>
+    </div>
+    <div class="settings-section">
+      <h3>Screensaver</h3>
+      <label>Screensaver timeout (min)
+        <input id="sScreensaver" type="number" min="1" max="60" value="5" />
+      </label>
+    </div>
+    <div class="settings-section">
+      <h3>Library folders</h3>
+      <div class="folder-group">
+        <h4>Movie folders</h4>
+        <div id="movieLibList" class="lib-list"></div>
       </div>
-    </fieldset>
-    <h3>Library folders</h3>
-    <label>Add to category
-      <select id="fbCategory">
-        <option value="movie">Movies</option>
-        <option value="series">Series</option>
-        <option value="music">Music</option>
-      </select>
-    </label>
-    <div id="movieLibList" class="lib-list"></div>
-    <div id="seriesLibList" class="lib-list"></div>
-    <div class="folder-browser">
-      <div class="fb-path"><input id="fbPath" type="text" placeholder="Path to browse or paste" /> <button id="fbGo" class="btn">Go</button></div>
-      <div id="fbDirs" class="fb-dirs"></div>
-      <button id="fbAdd" class="btn">Add this folder</button>
+      <div class="folder-group">
+        <h4>Series folders</h4>
+        <div id="seriesLibList" class="lib-list"></div>
+      </div>
+      <div class="folder-browser">
+        <div class="fb-path"><input id="fbPath" type="text" placeholder="Path to browse or paste" /> <button id="fbGo" class="btn">Go</button></div>
+        <div id="fbDirs" class="fb-dirs"></div>
+        <div class="fb-add-row">
+          <button id="fbAddMovie" class="btn">Add to Movies</button>
+          <button id="fbAddSeries" class="btn">Add to Series</button>
+          <button id="fbAddMusic" class="btn">Use for Music</button>
+        </div>
+      </div>
     </div>
     <div class="modal-actions">
       <button id="sSave" class="btn primary">Save</button>

@@ -1075,9 +1075,8 @@ async function browseTo(p) {
     container.appendChild(div);
   });
 }
-async function addFolder(d) {
+async function addFolder(d, cat) {
   if (!d) return;
-  const cat = $("fbCategory").value || "movie";
   if (cat === "music") {
     $("sMusicDir").value = d;
     return;
@@ -1087,11 +1086,23 @@ async function addFolder(d) {
 }
 $("fbGo").onclick = () => browseTo($("fbPath").value.trim());
 $("fbPath").addEventListener("keydown", (e) => { if (e.key === "Enter") browseTo($("fbPath").value.trim()); });
-$("fbAdd").onclick = async () => {
+$("fbAddMovie").onclick = async () => {
   const typed = $("fbPath").value.trim();
   const d = typed || selectedDir;
   if (!d) return;
-  await addFolder(d);
+  await addFolder(d, "movie");
+};
+$("fbAddSeries").onclick = async () => {
+  const typed = $("fbPath").value.trim();
+  const d = typed || selectedDir;
+  if (!d) return;
+  await addFolder(d, "series");
+};
+$("fbAddMusic").onclick = async () => {
+  const typed = $("fbPath").value.trim();
+  const d = typed || selectedDir;
+  if (!d) return;
+  await addFolder(d, "music");
 };
 
 // filters

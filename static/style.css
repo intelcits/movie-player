@@ -152,7 +152,7 @@ main { position:relative; z-index:1; }
 }
 
 .modal { position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; z-index:20; }
-.modal-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:20px; width:min(640px, 92vw); max-height:85vh; overflow:auto; }
+.modal-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:20px; width:min(960px, 92vw); max-height:90vh; overflow:auto; }
 .modal-card h2, .modal-card h3 { margin-top:0; }
 .modal-card label { display:flex; align-items:center; gap:8px; margin:10px 0; font-size:calc(var(--fs-base) * 13 / 15); color:var(--muted); flex-wrap:wrap; }
 .modal-card label input[type="checkbox"] { width:auto; margin:0; }
@@ -319,3 +319,5 @@ body[data-theme="modern"] .detail-info {
 .screensaver { position:fixed; inset:0; background:#000; z-index:9999; display:flex; align-items:center; justify-content:center; overflow:hidden; } .screensaver.hidden { display:none; } .screensaver img { position:absolute; max-width:100%; max-height:100%; opacity:0; transition:opacity 1.2s; } .screensaver img.active { opacity:1; }
 
 @keyframes ss-fade { from { opacity:0; } to { opacity:1; } } @keyframes ss-zoom { from { transform:scale(1.2); opacity:0; } to { transform:scale(1); opacity:1; } } @keyframes ss-slide-left { from { transform:translateX(100%); opacity:0; } to { transform:translateX(0); opacity:1; } } @keyframes ss-slide-right { from { transform:translateX(-100%); opacity:0; } to { transform:translateX(0); opacity:1; } } .screensaver img.ss-fade { animation: ss-fade 1.2s ease; } .screensaver img.ss-zoom { animation: ss-zoom 1.2s ease; } .screensaver img.ss-slide-left { animation: ss-slide-left 1.2s ease; } .screensaver img.ss-slide-right { animation: ss-slide-right 1.2s ease; }
+
+.settings-section { border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin:14px 0; background:var(--panel2); } .settings-section > h3 { margin:0 0 10px; color:var(--text); font-size:calc(var(--fs-base)*15/15); border-bottom:1px solid var(--border); padding-bottom:6px; } .folder-group h4 { margin:8px 0 4px; color:var(--text); font-size:calc(var(--fs-base)*13/15); } .fb-add-row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
