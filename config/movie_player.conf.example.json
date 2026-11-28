@@ -24,5 +24,6 @@
     "custom_streaming_sites":  [
 
                                ],
-    "music_dir":  ""
+    "music_dir":  "",
+    "screensaver_timeout":  5
 }

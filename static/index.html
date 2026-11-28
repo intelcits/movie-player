@@ -267,6 +267,9 @@
     <label>Music folder
       <input id="sMusicDir" type="text" placeholder="Path to folder with mp3 files" />
     </label>
+    <label>Screensaver timeout (min)
+      <input id="sScreensaver" type="number" min="1" max="60" value="5" />
+    </label>
     <label>Interface font size (px)
       <input id="sFontSize" type="number" min="12" max="24" value="15" />
     </label>
@@ -363,10 +366,13 @@
 </div>
 
 <div id="miniPlayer" class="mini-player">
+  <button id="mpMinimize" class="btn mp-min">_</button>
   <button id="mpPlayPause" class="btn">▶</button>
   <span id="mpTrack" class="mp-track"><span class="mp-track-text">No track</span></span>
   <input id="mpVolume" type="range" min="0" max="100" value="50" />
 </div>
+
+<div id="screensaver" class="screensaver hidden"></div>
 
 <script src="/static/app.js"></script>
 </body>

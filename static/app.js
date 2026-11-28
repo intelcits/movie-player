@@ -150,6 +150,7 @@ async function loadConfig() {
   $("sFontSize").value = cfg.ui_font_size || 15;
   $("sFontFamily").value = cfg.ui_font_family || "system";
   $("sMusicDir").value = cfg.music_dir || "";
+  $("sScreensaver").value = cfg.screensaver_timeout || 5;
   $("sSubSize").value = cfg.sub_size || 28;
   $("sSubColor").value = cfg.sub_color || "#ffffff";
   applyUiPrefs();
@@ -451,7 +452,6 @@ async function openDetail(m) {
         iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
         iframe.allowFullscreen = true;
         tr.appendChild(iframe);
-        mpPauseForMedia();
       }
       // cast photos
       const cp = $("dCastPhotos");
@@ -879,7 +879,6 @@ $("playBtn").onclick = async () => {
 };
 $("browserPlayBtn").onclick = () => {
   if (!currentMovie) return;
-  mpPauseForMedia();
   window.open(`/player.html?path=${encodeURIComponent(currentMovie.path)}&sub=${encodeURIComponent($("subSelect").value||"")}`, "_blank");
 };
 
@@ -1028,6 +1027,7 @@ $("sSave").onclick = async () => {
     ui_font_size: parseInt($("sFontSize").value) || 15,
     ui_font_family: $("sFontFamily").value,
     music_dir: $("sMusicDir").value.trim(),
+    screensaver_timeout: parseInt($("sScreensaver").value) || 5,
     sub_size: parseInt($("sSubSize").value) || 28,
     sub_color: $("sSubColor").value || "#ffffff",
   };
@@ -1037,6 +1037,8 @@ $("sSave").onclick = async () => {
   if (currentCategory === "movie" || currentCategory === "series") await loadMovies();
   applyUiPrefs();
   $("settingsModal").classList.add("hidden");
+  window._ssTimeout = parseInt($("sScreensaver").value) || 5;
+  if (typeof ssReset === "function") ssReset();
 };
 
 // folder browser
@@ -1227,6 +1229,8 @@ loadConfig().then(() => {
   loadMovies();
   updateCounter();
   if (typeof mpLoadTracks === "function") mpLoadTracks();
+  window._ssTimeout = parseInt($("sScreensaver").value) || 5;
+  if (typeof ssLoadImages === "function") { ssLoadImages().then(() => { if (typeof ssReset === "function") ssReset(); }); }
 });
 
 // streaming
@@ -1506,3 +1510,97 @@ mpAudio.addEventListener("ended", () => {
   mpSetTrack(t.name);
   mpAudio.play().catch(() => {});
 });
+// ---- Mini player drag + minimize ----
+(function() {
+  const player = $("miniPlayer");
+  const minBtn = $("mpMinimize");
+  if (!player) return;
+  let dragging = false, ox = 0, oy = 0;
+  // restore position
+  try {
+    const pos = JSON.parse(localStorage.getItem("mp_player_pos") || "null");
+    if (pos) { player.style.left = pos.x + "px"; player.style.top = pos.y + "px"; player.style.right = "auto"; player.style.bottom = "auto"; }
+  } catch (e) {}
+  player.addEventListener("mousedown", (e) => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON") return;
+    dragging = true;
+    const r = player.getBoundingClientRect();
+    ox = e.clientX - r.left;
+    oy = e.clientY - r.top;
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    player.style.left = (e.clientX - ox) + "px";
+    player.style.top = (e.clientY - oy) + "px";
+    player.style.right = "auto";
+    player.style.bottom = "auto";
+  });
+  window.addEventListener("mouseup", () => {
+    if (dragging) {
+      dragging = false;
+      try { localStorage.setItem("mp_player_pos", JSON.stringify({ x: parseInt(player.style.left), y: parseInt(player.style.top) })); } catch (e) {}
+    }
+  });
+  if (minBtn) {
+    minBtn.addEventListener("click", () => {
+      player.classList.toggle("minimized");
+      minBtn.textContent = player.classList.contains("minimized") ? "+" : "_";
+    });
+  }
+})();
+// ---- Screensaver ----
+let ssImages = [];
+let ssTimer = null;
+let ssActive = false;
+let ssInterval = null;
+const ssAnims = ["ss-fade","ss-zoom","ss-slide-left","ss-slide-right"];
+
+async function ssLoadImages() {
+  try {
+    const data = await api("/api/art/list");
+    ssImages = data.images || [];
+  } catch (e) { ssImages = []; }
+}
+
+function ssShowNext() {
+  const overlay = document.getElementById("screensaver");
+  if (!overlay || !ssImages.length) return;
+  const img = document.createElement("img");
+  const path = ssImages[Math.floor(Math.random() * ssImages.length)];
+  img.src = `/api/file?path=${encodeURIComponent(path)}`;
+  img.className = ssAnims[Math.floor(Math.random() * ssAnims.length)];
+  overlay.innerHTML = "";
+  overlay.appendChild(img);
+  requestAnimationFrame(() => { img.classList.add("active"); });
+}
+
+function ssStart() {
+  if (ssActive || !ssImages.length) return;
+  ssActive = true;
+  const overlay = document.getElementById("screensaver");
+  overlay.classList.remove("hidden");
+  ssShowNext();
+  ssInterval = setInterval(ssShowNext, 6000);
+}
+
+function ssReset() {
+  if (ssActive) {
+    ssActive = false;
+    const overlay = document.getElementById("screensaver");
+    overlay.classList.add("hidden");
+    overlay.innerHTML = "";
+    if (ssInterval) { clearInterval(ssInterval); ssInterval = null; }
+  }
+  if (ssTimer) clearTimeout(ssTimer);
+  const mins = (window._ssTimeout || 5);
+  ssTimer = setTimeout(ssStart, mins * 60 * 1000);
+}
+
+["mousemove","mousedown","keydown","touchstart","wheel","click"].forEach((ev) => {
+  window.addEventListener(ev, ssReset, { passive: true });
+  document.addEventListener(ev, ssReset, { passive: true });
+});
+
+// init
+const _ssOrigLoadConfig = null;

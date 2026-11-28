@@ -72,6 +72,7 @@ DEFAULT_CONFIG = {
     "sub_size": 28,
     "sub_color": "#ffffff",
     "music_dir": "",
+    "screensaver_timeout": 5,
 }
 
 
@@ -2361,6 +2362,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         if fn.lower().endswith(".mp3"):
                             tracks.append({"name": os.path.splitext(fn)[0], "path": os.path.join(root, fn)})
             self._json({"tracks": tracks, "dir": d})
+            return
+        if path == "/api/art/list":
+            conn = db_conn()
+            try:
+                rows = conn.execute("SELECT poster_local, backdrop_local FROM movies").fetchall()
+                coll = conn.execute("SELECT poster_local, backdrop_local FROM collections").fetchall()
+            finally:
+                conn.close()
+            imgs = set()
+            for r in list(rows) + list(coll):
+                for v in (r["poster_local"], r["backdrop_local"]):
+                    if v and os.path.isfile(v):
+                        imgs.add(v)
+            self._json({"images": sorted(imgs)})
             return
         if path == "/api/movies":
             # filters from query
