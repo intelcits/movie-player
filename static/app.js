@@ -271,8 +271,13 @@ async function scan() {
   }
 }
 
-function groupKey(m) {
-  if (m.collection) return m.collection.split(/[\\/]/).pop() || m.collection;
+function groupKey(m, setsMode) {
+  if (m.collection) {
+    const cname = String(m.collection).toLowerCase();
+    const isAnthology = cname.includes("anthology");
+    if (isAnthology && !setsMode) return null;
+    return m.collection.split(/[\\/]/).pop() || m.collection;
+  }
   const name = (m.title || m.name || "").trim();
   // series episode: "Series Name S01E02 ..."
   let mm = name.match(/^(.+?)[\s._-]+S\d+E\d+/i);
@@ -291,9 +296,10 @@ function renderGrid() {
   grid.innerHTML = "";
   $("emptyState").classList.toggle("hidden", movies.length > 0);
   // group movies
+  const setsMode = !!($("fSetsOnly")?.checked);
   const groups = new Map();
   movies.forEach((m) => {
-    const k = groupKey(m);
+    const k = groupKey(m, setsMode);
     if (!k) {
       if (!groups.has("__single__" + m.path)) groups.set("__single__" + m.path, [m]);
       else groups.get("__single__" + m.path).push(m);
