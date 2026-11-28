@@ -72,6 +72,7 @@ function switchTab(tab) {
     loadFilterOptions();
     loadMovies();
   }
+  mpResumeFromMedia();
 }
 
 function applyTheme(name) {
@@ -450,6 +451,7 @@ async function openDetail(m) {
         iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
         iframe.allowFullscreen = true;
         tr.appendChild(iframe);
+        mpPauseForMedia();
       }
       // cast photos
       const cp = $("dCastPhotos");
@@ -502,8 +504,8 @@ async function openDetail(m) {
   subSel.onchange = () => { currentSub = subSel.value || null; };
 }
 
-$("backBtn").onclick = () => showView("library");
-$("collBackBtn").onclick = () => showView("library");
+$("backBtn").onclick = () => { showView("library"); mpResumeFromMedia(); };
+$("collBackBtn").onclick = () => { showView("library"); mpResumeFromMedia(); };
 
 // ---- Edit media modal ----
 let editTarget = "movie";
@@ -831,6 +833,7 @@ $("seriesBackBtn").onclick = () => {
   } else {
     showView("library");
     loadMovies();
+    mpResumeFromMedia();
   }
 };
 
@@ -866,6 +869,7 @@ function openCollection(title, items) {
 $("collChangeArtBtn").onclick = () => openEditModal("collection");
 $("playBtn").onclick = async () => {
   if (!currentMovie) return;
+  mpPauseForMedia();
   const sub = $("subSelect").value || null;
   currentSub = sub;
   subsOn = !!sub;
@@ -875,6 +879,7 @@ $("playBtn").onclick = async () => {
 };
 $("browserPlayBtn").onclick = () => {
   if (!currentMovie) return;
+  mpPauseForMedia();
   window.open(`/player.html?path=${encodeURIComponent(currentMovie.path)}&sub=${encodeURIComponent($("subSelect").value||"")}`, "_blank");
 };
 
@@ -892,6 +897,7 @@ async function refreshStatus() {
     const paused = st.paused;
     if (!playing && !paused) {
       $("playerBar").classList.add("hidden");
+      mpResumeFromMedia();
     } else {
       $("playerBar").classList.remove("hidden");
     }
@@ -1427,7 +1433,34 @@ const mpAudio = new Audio();
 mpAudio.volume = 0.5;
 let mpTracks = [];
 let mpIndex = -1;
+let mpPausedByMedia = false;
 
+function mpPauseForMedia() {
+  if (!mpAudio.paused) {
+    mpAudio.pause();
+    mpPausedByMedia = true;
+  }
+}
+function mpResumeFromMedia() {
+  if (mpPausedByMedia) {
+    mpPausedByMedia = false;
+    if (mpTracks.length) mpAudio.play().catch(() => {});
+  }
+}
+
+function mpSetTrack(name) {
+  const text = document.querySelector("#mpTrack .mp-track-text");
+  if (text) text.textContent = name;
+  const track = $("mpTrack");
+  if (track) {
+    // toggle scroll if overflow
+    requestAnimationFrame(() => {
+      const inner = track.querySelector(".mp-track-text");
+      if (inner && inner.scrollWidth > track.clientWidth) track.classList.add("scrolling");
+      else track.classList.remove("scrolling");
+    });
+  }
+}
 function mpPickRandom() {
   if (!mpTracks.length) return null;
   let i = Math.floor(Math.random() * mpTracks.length);
@@ -1444,12 +1477,12 @@ async function mpLoadTracks() {
     mpTracks = [];
   }
   if (!mpTracks.length) {
-    $("mpTrack").textContent = "No tracks";
+    mpSetTrack("No tracks");
     return;
   }
   const t = mpPickRandom();
   mpAudio.src = `/api/file?path=${encodeURIComponent(t.path)}`;
-  $("mpTrack").textContent = t.name;
+  mpSetTrack(t.name);
   mpAudio.play().catch(() => {});
 }
 
@@ -1457,13 +1490,19 @@ $("mpPlayPause").onclick = () => {
   if (mpAudio.paused) { mpAudio.play().catch(() => {}); $("mpPlayPause").textContent = "\u25B6"; }
   else { mpAudio.pause(); $("mpPlayPause").textContent = "\u25B6"; }
 };
-$("mpVolume").addEventListener("input", (e) => { mpAudio.volume = parseInt(e.target.value,10)/100; });
+$("mpTrack").addEventListener("dblclick", () => {
+  const t = mpPickRandom();
+  if (!t) return;
+  mpAudio.src = `/api/file?path=${encodeURIComponent(t.path)}`;
+  mpSetTrack(t.name);
+  mpAudio.play().catch(() => {});
+});
 mpAudio.addEventListener("play", () => { $("mpPlayPause").textContent = "\u23F8"; });
 mpAudio.addEventListener("pause", () => { $("mpPlayPause").textContent = "\u25B6"; });
 mpAudio.addEventListener("ended", () => {
   const t = mpPickRandom();
   if (!t) return;
   mpAudio.src = `/api/file?path=${encodeURIComponent(t.path)}`;
-  $("mpTrack").textContent = t.name;
+  mpSetTrack(t.name);
   mpAudio.play().catch(() => {});
 });
