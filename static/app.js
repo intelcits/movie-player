@@ -1434,7 +1434,11 @@ $("customSiteForm").addEventListener("submit", async (ev) => {
 loadStreamingSites();
 // ---- Mini MP3 player ----
 const mpAudio = new Audio();
-mpAudio.volume = 0.5;
+let mpSavedVol = 50;
+try { mpSavedVol = parseInt(localStorage.getItem("mp_volume") || "50", 10); } catch (e) {}
+if (isNaN(mpSavedVol)) mpSavedVol = 50;
+mpAudio.volume = mpSavedVol / 100;
+try { const sl = document.getElementById("mpVolume"); if (sl) sl.value = mpSavedVol; } catch (e) {}
 let mpTracks = [];
 let mpIndex = -1;
 let mpPausedByMedia = false;
@@ -1503,6 +1507,7 @@ $("mpTrack").addEventListener("dblclick", () => {
 });
 mpAudio.addEventListener("play", () => { $("mpPlayPause").textContent = "\u23F8"; });
 mpAudio.addEventListener("pause", () => { $("mpPlayPause").textContent = "\u25B6"; });
+$("mpVolume").addEventListener("input", (e) => { const v = parseInt(e.target.value,10); mpAudio.volume = v/100; try { localStorage.setItem("mp_volume", String(v)); } catch (err) {} });
 mpAudio.addEventListener("ended", () => {
   const t = mpPickRandom();
   if (!t) return;
