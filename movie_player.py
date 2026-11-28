@@ -29,11 +29,22 @@ except Exception:
     HAS_REQUESTS = False
 
 HERE = Path(__file__).resolve().parent
-CONFIG_FILE = HERE / "movie_player.conf.json"
-CACHE_DIR = HERE / ".cache"
+CONFIG_DIR = HERE / "config"
+DATA_DIR = HERE / "data"
+CACHE_DIR = DATA_DIR / "cache"
+LOG_DIR = DATA_DIR / "logs"
+RUNTIME_DIR = DATA_DIR / "run"
+CONFIG_FILE = CONFIG_DIR / "movie_player.conf.json"
+LEGACY_CONFIG_FILE = HERE / "movie_player.conf.json"
+LEGACY_CACHE_DIR = HERE / ".cache"
+LEGACY_LOG_DIR = HERE / "logs"
+LEGACY_PID_FILE = HERE / "movie_player.pid"
 THUMB_DIR = CACHE_DIR / "thumbs"
 VTT_DIR = CACHE_DIR / "vtt"
 TMDB_CACHE_FILE = CACHE_DIR / "tmdb.json"
+DB_PATH = DATA_DIR / "movieplayer.db"
+IMAGES_DIR = CACHE_DIR / "images"
+PID_FILE = RUNTIME_DIR / "movie_player.pid"
 
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".mpg", ".mpeg", ".wmv",
               ".flv", ".m2ts", ".mts", ".webm", ".ogv", ".ts", ".vob"}
@@ -63,11 +74,67 @@ DEFAULT_CONFIG = {
 }
 
 
+def migrate_legacy_layout():
+    """Move the old root-level runtime layout into config/ and data/ safely."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    if not CONFIG_FILE.exists() and LEGACY_CONFIG_FILE.exists():
+        try:
+            shutil.copy2(LEGACY_CONFIG_FILE, CONFIG_FILE)
+        except OSError:
+            pass
+    if LEGACY_CACHE_DIR.exists() and not CACHE_DIR.exists():
+        try:
+            shutil.move(str(LEGACY_CACHE_DIR), str(CACHE_DIR))
+        except OSError:
+            pass
+    if LEGACY_LOG_DIR.exists() and not LOG_DIR.exists():
+        try:
+            shutil.move(str(LEGACY_LOG_DIR), str(LOG_DIR))
+        except OSError:
+            pass
+    if LEGACY_PID_FILE.exists() and not PID_FILE.exists():
+        try:
+            shutil.move(str(LEGACY_PID_FILE), str(PID_FILE))
+        except OSError:
+            pass
+    # Older V2 builds kept the SQLite file inside the cache directory.
+    # Promote a populated database when the new data root is empty or absent.
+    legacy_db = CACHE_DIR / "movieplayer.db"
+    try:
+        def has_movies(path):
+            if not path.exists():
+                return False
+            conn = sqlite3.connect(str(path), timeout=5)
+            try:
+                return conn.execute("SELECT COUNT(*) FROM movies").fetchone()[0] > 0
+            finally:
+                conn.close()
+        if has_movies(legacy_db) and not has_movies(DB_PATH):
+            if DB_PATH.exists():
+                backup = DATA_DIR / "movieplayer.db.empty-before-migration"
+                if not backup.exists():
+                    shutil.move(str(DB_PATH), str(backup))
+                else:
+                    DB_PATH.unlink()
+            shutil.move(str(legacy_db), str(DB_PATH))
+    except (OSError, sqlite3.Error):
+        # Startup must remain usable even if a legacy file is locked or malformed.
+        pass
+
+
 def load_config():
     cfg = dict(DEFAULT_CONFIG)
     if CONFIG_FILE.exists():
         try:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            cfg.update(data)
+        except Exception:
+            pass
+    elif LEGACY_CONFIG_FILE.exists():
+        try:
+            data = json.loads(LEGACY_CONFIG_FILE.read_text(encoding="utf-8"))
             cfg.update(data)
         except Exception:
             pass
@@ -85,7 +152,11 @@ def load_config():
     for k in ("movie_dirs", "series_dirs"):
         cfg.setdefault(k, [])
     cfg.setdefault("tmdb_session_id", "")
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
     VTT_DIR.mkdir(parents=True, exist_ok=True)
     return cfg
@@ -95,9 +166,8 @@ def save_config(cfg):
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+migrate_legacy_layout()
 CFG = load_config()
-DB_PATH = CACHE_DIR / "movieplayer.db"
-IMAGES_DIR = CACHE_DIR / "images"
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -231,7 +301,33 @@ def init_db():
         conn.close()
 
 
+def migrate_legacy_cache_paths():
+    """Rewrite cache paths stored by the pre-data-directory layout."""
+    legacy_prefixes = (
+        str(LEGACY_CACHE_DIR),
+        str(HERE / "cache"),
+    )
+    new_prefix = str(CACHE_DIR)
+    conn = db_conn()
+    try:
+        for table in ("movies", "collections"):
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            for column in ("poster_local", "backdrop_local"):
+                if column not in columns:
+                    continue
+                for legacy_prefix in legacy_prefixes:
+                    conn.execute(
+                        f"UPDATE {table} SET {column}=REPLACE({column}, ?, ?) "
+                        f"WHERE {column} IS NOT NULL AND instr({column}, ?) > 0",
+                        (legacy_prefix, new_prefix, legacy_prefix),
+                    )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 init_db()
+migrate_legacy_cache_paths()
 
 # ---------- TMDB cache ----------
 _tmdb_cache = {}
@@ -2948,9 +3044,6 @@ def open_browser(url):
         webbrowser.open(url)
     except Exception:
         pass
-
-
-PID_FILE = HERE / "movie_player.pid"
 
 
 def write_pid_file():

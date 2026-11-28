@@ -3,14 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MoviePlayer V2</title>
+<title>Marcelo Media Library</title>
 <link rel="stylesheet" href="/static/style.css">
-<link id="themeCss" rel="stylesheet" href="/static/theme-videoclub.css?v=6">
+<link id="themeCss" rel="stylesheet" href="/static/theme-videoclub.css?v=7">
 </head>
 <body>
 <header class="topbar">
-  <div class="top-identity">
-    <div class="brand"><span class="brand-mark">▣</span> MoviePlayer V2</div>
+  <div class="top-identity has-banner">
+    <img class="identity-banner" src="/static/img/Pulp-Media-Library.jpg" alt="" />
+    <div class="brand">ML v2</div>
     <span id="mediaCounter" class="media-counter" data-active="movies"><span class="counter-item counter-movies">Movies: 0</span><span class="counter-separator"> · </span><span class="counter-item counter-series">Series: 0</span></span>
   </div>
   <nav class="source-console" aria-label="Media source selector" role="radiogroup">
@@ -45,9 +46,13 @@
       <span class="pos-text pos-off">OFF</span>
     </div>
   </nav>
+  <div id="weatherWidget" class="weather-widget" title="Clima actual de CABA, Buenos Aires">
+    <span id="weatherIcon" class="weather-icon" aria-hidden="true">☀️</span>
+    <span class="weather-copy"><span id="weatherDate">--/--/----</span><span id="weatherTime">--:--</span><span id="weatherTemp">-- °C</span><small>CABA</small></span>
+  </div>
   <div class="top-controls">
-    <button id="settingsBtn" class="btn icon utility-switch utility-settings" title="Settings"><img src="/static/img/settings.svg" alt="Settings" width="20" height="20" /></button>
-    <button id="serverBtn" class="btn icon utility-switch utility-power" title="Server controls"><img src="/static/img/power.svg" alt="Server" width="20" height="20" /></button>
+    <button id="settingsBtn" class="btn utility-control utility-switch utility-settings" title="Settings"><span class="utility-face"><img src="/static/img/settings.svg" alt="Settings" /></span></button>
+    <button id="serverBtn" class="btn utility-control utility-switch utility-power" title="Server controls"><span class="utility-face"><img src="/static/img/power.svg" alt="Server" /></span></button>
   </div>
 </header>
 
@@ -271,12 +276,18 @@
         <option value="mono">Monospace</option>
       </select>
     </label>
-    <label>Subtitle size (px)
-      <input id="sSubSize" type="number" min="12" max="60" value="28" />
-    </label>
-    <label>Subtitle color
-      <input id="sSubColor" type="color" value="#ffffff" />
-    </label>
+    <fieldset class="subtitle-settings">
+      <legend>Subtítulo: color y tamaño</legend>
+      <div class="subtitle-settings-row">
+        <label for="sSubSize">Tamaño
+          <input id="sSubSize" type="number" min="12" max="60" value="28" />
+          <span>px</span>
+        </label>
+        <label for="sSubColor">Color
+          <input id="sSubColor" type="color" value="#ffffff" />
+        </label>
+      </div>
+    </fieldset>
     <h3>Library folders</h3>
     <label>Add to category
       <select id="fbCategory">

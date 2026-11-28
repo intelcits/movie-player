@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-set "PIDFILE=%~dp0movie_player.pid"
+set "PIDFILE=%~dp0data\run\movie_player.pid"
 
 if "%~1"=="" goto autostart
 if /i "%~1"=="stop" goto stop

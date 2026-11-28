@@ -3,8 +3,8 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE" || exit 1
-PIDFILE="$HERE/movie_player.pid"
-LOGDIR="$HERE/logs"
+PIDFILE="$HERE/data/run/movie_player.pid"
+LOGDIR="$HERE/data/logs"
 LOGFILE="$LOGDIR/movie_player.log"
 
 find_python() {

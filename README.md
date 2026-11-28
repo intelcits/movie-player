@@ -10,7 +10,8 @@ A smart, easy local movie player with an HTML control panel.
 Uses `ffplay` (playback), `ffprobe` (metadata) and `ffmpeg` (thumbnails, subtitles conversion).
 
 ## Requirements
-- Python 3.8+
+- Windows 10 or newer, or Ubuntu 20.04 or newer.
+- Python 3.8+ (`py -3` on Windows, `python3` on Ubuntu).
 - ffmpeg / ffprobe / ffplay on PATH (or set paths in Settings)
 - (Optional) TMDB v3 API key for posters, backdrops, cast, etc.
 
@@ -26,13 +27,32 @@ chmod +x run.sh
 ```
 Or directly:
 ```
-python movie_player.py
+# Windows PowerShell
+py -3 movie_player.py
+
+# Ubuntu
+python3 movie_player.py
 ```
 Then open http://127.0.0.1:8765
 
+## Project layout
+
+Source code and static assets stay in the project root and `static/`. Runtime state is kept separately:
+
+```text
+config/movie_player.conf.json       Local configuration (not committed)
+config/movie_player.conf.example.json Safe configuration template
+data/movieplayer.db                 SQLite database
+data/cache/                         TMDB JSON, images, thumbnails and subtitles
+data/logs/                          Application and scan logs
+data/run/                           PID and scan lock files
+```
+
+The first start after upgrading detects the old root-level layout and migrates `.cache/`, `logs/` and the PID file. The old configuration is copied to `config/movie_player.conf.json` so existing settings remain available; the root copy can then be removed safely.
+
 ## Standalone scan (no app required)
 
-`scan_movies.py` scans the folders declared in `movie_player.conf.json`, enriches new or changed files, and updates the SQLite database **without starting the web server**. It can be run on demand or scheduled. By default it scans **both movies and series**; use `--category` to restrict it.
+`scan_movies.py` scans the folders declared in `config/movie_player.conf.json`, enriches new or changed files, and updates the SQLite database in `data/movieplayer.db` **without starting the web server**. It can be run on demand or scheduled. By default it scans **both movies and series**; use `--category` to restrict it.
 
 Keep `scan_movies.py` in the same folder as `movie_player.py`.
 
@@ -45,7 +65,7 @@ python scan_movies.py --dry-run          # list files, change nothing
 python scan_movies.py --dir "D:\\New" --category movie   # scan one folder only
 ```
 
-Each run writes a UTF-8 log to `logs/scan_<date>_<time>_<pid>.log` and also prints it to the console. The log lists every file with `NEW`, `UPDATE`, `SKIP` or `REMOVED`, plus a final summary (counts, errors, elapsed time). Exit codes: `0` success, `1` file errors, `2` no folders configured, `3` another scan is already running.
+Each run writes a UTF-8 log to `data/logs/scan_<date>_<time>_<pid>.log` and also prints it to the console. The log lists every file with `NEW`, `UPDATE`, `SKIP` or `REMOVED`, plus a final summary (counts, errors, elapsed time). Exit codes: `0` success, `1` file errors, `2` no folders configured, `3` another scan is already running.
 
 Scheduling examples:
 ```
@@ -63,7 +83,7 @@ Notes:
 
 ## Features
 - Scan library folders for movies (mkv, mp4, avi, mov, webm, ...)
-- SQLite metadata database (`movieplayer.db`) with per-movie details: title, year, overview, genres, runtime, director, cast, country, rating, duration, codec.
+- SQLite metadata database (`data/movieplayer.db`) with per-movie details: title, year, overview, genres, runtime, director, cast, country, rating, duration, codec.
 - TMDB posters, backdrops, overviews, taglines, ratings, genres, cast, director, country (paste your TMDB v3 API key in Settings).
 - Rich detail view: tagline, YouTube trailer embed, cast photos, and a "similar movies" strip from TMDB.
 - Better title parsing (strips release tags, codecs, brackets, audio channels, leading numbering, and James Bond branding).
@@ -76,7 +96,9 @@ Notes:
 - Interface font size and font family settings.
 - Subtitle size and color settings (ffplay force_style + browser player ::cue).
 - Movies/Series counters in the top bar.
-- Cached metadata images (`.cache/images/`) so they are not re-downloaded.
+- Cached metadata images (`data/cache/images/`) so they are not re-downloaded.
+- Runtime data is separated from source code: configuration is in `config/`, the SQLite database is in `data/movieplayer.db`, cache files are in `data/cache/`, logs are in `data/logs/`, and PID/lock files are in `data/run/`.
+- On first start after upgrading, the old root-level `.cache/`, `logs/`, `movie_player.conf.json` and PID file are detected and migrated or copied automatically.
 - On scan, deleted files are removed from the DB and changed files are re-enriched.
 - When TMDB has no poster, a frame from the movie (ffmpeg thumbnail) is used as fallback art.
 - Filters: name, country, director, year, actor, genre.

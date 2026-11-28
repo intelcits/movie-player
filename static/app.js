@@ -78,8 +78,44 @@ function applyTheme(name) {
   const link = $("themeCss");
   const theme = name || "videoclub";
   document.body.dataset.theme = theme;
-  if (link) link.href = `/static/theme-${theme}.css${theme === "videoclub" ? "?v=6" : ""}`;
+  if (link) link.href = `/static/theme-${theme}.css${theme === "videoclub" ? "?v=7" : ""}`;
 }
+
+function updateCabaClock() {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("es-AR", {
+    timeZone:"America/Argentina/Buenos_Aires", day:"2-digit", month:"2-digit", year:"numeric",
+    hour:"2-digit", minute:"2-digit", hour12:false,
+  }).formatToParts(now).reduce((out, part) => { out[part.type] = part.value; return out; }, {});
+  $("weatherDate").textContent = `${parts.day}/${parts.month}/${parts.year}`;
+  $("weatherTime").textContent = `${parts.hour}:${parts.minute}`;
+}
+
+function weatherVisual(code, isDay) {
+  if ([1,2].includes(code)) return isDay ? "🌤️" : "☁️";
+  if ([3,45,48].includes(code)) return "☁️";
+  if ([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return "🌧️";
+  if ([71,73,75,77,85,86].includes(code)) return "🌨️";
+  if ([95,96,99].includes(code)) return "⛈️";
+  return isDay ? "☀️" : "🌙";
+}
+
+async function loadCabaWeather() {
+  try {
+    const url = "https://api.open-meteo.com/v1/forecast?latitude=-34.6037&longitude=-58.3816&current=temperature_2m,weather_code,is_day&timezone=America%2FArgentina%2FBuenos_Aires";
+    const data = await fetch(url).then((res) => res.ok ? res.json() : Promise.reject(new Error("weather")));
+    const current = data.current || {};
+    $("weatherTemp").textContent = `${Math.round(Number(current.temperature_2m))} °C`;
+    $("weatherIcon").textContent = weatherVisual(Number(current.weather_code), Number(current.is_day) === 1);
+  } catch (e) {
+    $("weatherTemp").textContent = "-- °C";
+  }
+}
+
+updateCabaClock();
+setInterval(updateCabaClock, 1000);
+loadCabaWeather();
+setInterval(loadCabaWeather, 10 * 60 * 1000);
 
 const FONT_MAP = {
   system: '"Verdana", "Tahoma", sans-serif',
