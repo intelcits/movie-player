@@ -148,6 +148,7 @@ async function loadConfig() {
   $("sFullscreen").checked = cfg.fullscreen !== false;
   $("sFontSize").value = cfg.ui_font_size || 15;
   $("sFontFamily").value = cfg.ui_font_family || "system";
+  $("sMusicDir").value = cfg.music_dir || "";
   $("sSubSize").value = cfg.sub_size || 28;
   $("sSubColor").value = cfg.sub_color || "#ffffff";
   applyUiPrefs();
@@ -1020,6 +1021,7 @@ $("sSave").onclick = async () => {
     fullscreen: $("sFullscreen").checked,
     ui_font_size: parseInt($("sFontSize").value) || 15,
     ui_font_family: $("sFontFamily").value,
+    music_dir: $("sMusicDir").value.trim(),
     sub_size: parseInt($("sSubSize").value) || 28,
     sub_color: $("sSubColor").value || "#ffffff",
   };
@@ -1068,6 +1070,10 @@ async function browseTo(p) {
 async function addFolder(d) {
   if (!d) return;
   const cat = $("fbCategory").value || "movie";
+  if (cat === "music") {
+    $("sMusicDir").value = d;
+    return;
+  }
   await api("/api/libraries", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({action:"add", dir:d, category:cat}) });
   refreshLibLists();
 }
@@ -1214,6 +1220,7 @@ loadConfig().then(() => {
   loadFilterOptions();
   loadMovies();
   updateCounter();
+  if (typeof mpLoadTracks === "function") mpLoadTracks();
 });
 
 // streaming
@@ -1415,3 +1422,48 @@ $("customSiteForm").addEventListener("submit", async (ev) => {
   loadStreamingSites();
 });
 loadStreamingSites();
+// ---- Mini MP3 player ----
+const mpAudio = new Audio();
+mpAudio.volume = 0.5;
+let mpTracks = [];
+let mpIndex = -1;
+
+function mpPickRandom() {
+  if (!mpTracks.length) return null;
+  let i = Math.floor(Math.random() * mpTracks.length);
+  if (mpTracks.length > 1 && i === mpIndex) i = (i + 1) % mpTracks.length;
+  mpIndex = i;
+  return mpTracks[i];
+}
+
+async function mpLoadTracks() {
+  try {
+    const data = await api("/api/music/list");
+    mpTracks = data.tracks || [];
+  } catch (e) {
+    mpTracks = [];
+  }
+  if (!mpTracks.length) {
+    $("mpTrack").textContent = "No tracks";
+    return;
+  }
+  const t = mpPickRandom();
+  mpAudio.src = `/api/file?path=${encodeURIComponent(t.path)}`;
+  $("mpTrack").textContent = t.name;
+  mpAudio.play().catch(() => {});
+}
+
+$("mpPlayPause").onclick = () => {
+  if (mpAudio.paused) { mpAudio.play().catch(() => {}); $("mpPlayPause").textContent = "\u25B6"; }
+  else { mpAudio.pause(); $("mpPlayPause").textContent = "\u25B6"; }
+};
+$("mpVolume").addEventListener("input", (e) => { mpAudio.volume = parseInt(e.target.value,10)/100; });
+mpAudio.addEventListener("play", () => { $("mpPlayPause").textContent = "\u23F8"; });
+mpAudio.addEventListener("pause", () => { $("mpPlayPause").textContent = "\u25B6"; });
+mpAudio.addEventListener("ended", () => {
+  const t = mpPickRandom();
+  if (!t) return;
+  mpAudio.src = `/api/file?path=${encodeURIComponent(t.path)}`;
+  $("mpTrack").textContent = t.name;
+  mpAudio.play().catch(() => {});
+});

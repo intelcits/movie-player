@@ -264,6 +264,9 @@
     </label>
     <label><input type="checkbox" id="sKiosk" /> Kiosk mode (fullscreen, no controls)</label>
     <label><input type="checkbox" id="sFullscreen" checked /> Full screen mode</label>
+    <label>Music folder
+      <input id="sMusicDir" type="text" placeholder="Path to folder with mp3 files" />
+    </label>
     <label>Interface font size (px)
       <input id="sFontSize" type="number" min="12" max="24" value="15" />
     </label>
@@ -293,6 +296,7 @@
       <select id="fbCategory">
         <option value="movie">Movies</option>
         <option value="series">Series</option>
+        <option value="music">Music</option>
       </select>
     </label>
     <div id="movieLibList" class="lib-list"></div>
@@ -356,6 +360,12 @@
       <button id="artClose" class="btn">Close</button>
     </div>
   </div>
+</div>
+
+<div id="miniPlayer" class="mini-player">
+  <button id="mpPlayPause" class="btn">▶</button>
+  <span id="mpTrack" class="mp-track">No track</span>
+  <input id="mpVolume" type="range" min="0" max="100" value="50" />
 </div>
 
 <script src="/static/app.js"></script>

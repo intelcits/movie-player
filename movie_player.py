@@ -71,6 +71,7 @@ DEFAULT_CONFIG = {
     "ui_font_family": "system",
     "sub_size": 28,
     "sub_color": "#ffffff",
+    "music_dir": "",
 }
 
 
@@ -2350,6 +2351,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/status":
             self._json(playback_status())
+            return
+        if path == "/api/music/list":
+            d = (CFG.get("music_dir") or "").strip()
+            tracks = []
+            if d and os.path.isdir(d):
+                for root, _, files in os.walk(d):
+                    for fn in files:
+                        if fn.lower().endswith(".mp3"):
+                            tracks.append({"name": os.path.splitext(fn)[0], "path": os.path.join(root, fn)})
+            self._json({"tracks": tracks, "dir": d})
             return
         if path == "/api/movies":
             # filters from query
